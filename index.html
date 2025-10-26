@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Happy Hooker Rentals</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background-color: #f9f9f9;
+      color: #222;
+    }
+    header {
+      background-color: #004aad;
+      color: white;
+      text-align: center;
+      padding: 1.5rem;
+    }
+    .carousel img {
+      height: 420px;
+      object-fit: cover;
+    }
+    .gallery-thumb {
+      width: 100px;
+      height: 70px;
+      object-fit: cover;
+      cursor: pointer;
+    }
+	.btn{background:#000;color:#fff;padding:10px 14px;border-radius:8px;text-decoration:none;font-weight:600}
+    .btn.secondary{background:transparent;color:var(--accent);border:2px solid var(--accent)}
+	.pricing{display:flex;gap:12px;flex-wrap:wrap;margin-top:10px}
+	.price{background:#f3f9ff;padding:10px;border-radius:8px;font-weight:700}
+	.card{background:var(--card);padding:18px;border-radius:12px;box-shadow:0 6px 18px rgba(11,26,43,0.06)}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Happy Hooker Rentals</h1>
+    <p>Affordable RV Rentals Delivered to Your Campsite</p>
+	<p>We deliver well-maintained campers in the New England area with competive nightly & weekly rates.
+	Happy Hookers love their happy campers and our return customers receive 5% off.</p>
+	<a class="btn" href="mailto:happyhookerrentals@gmail.com">Email Us</a>
+  </header>
+
+  <div class="container my-5">
+    <div class="row-mb-5">
+        <h3>2022 Coachmen Apex Nano</h3>
+		<div class="pricing">
+            <div class="price">$125/night</div>
+            <div class="price">$787.50/week</div>
+			<a class="btn" onclick="openGallery('2022')">View Gallery</a>
+        </div>
+        <p>Sleeps up to 6 | Queen bed & bunks | Outdoor refrigerator and grill</p>
+    </div>
+    <div class="row mb-5">
+        <div id="carousel2022" class="carousel slide" data-bs-wrap="true">
+          <div class="carousel-inner">
+            <div class="carousel-item active">
+              <img src="./2022 25' Coachmen Apex Nano/main.jpg" class="d-block w-100 rounded-2xl shadow" alt="Main view of 2022 Coachmen Apex Nano">
+            </div>
+            <div class="carousel-item"><img src="./2022 25' Coachmen Apex Nano/ext-1.jpg" class="d-block w-100 rounded-2xl shadow" alt="Exterior view"></div>
+            <div class="carousel-item"><img src="./2022 25' Coachmen Apex Nano/int-1.jpg" class="d-block w-100 rounded-2xl shadow" alt="Interior view"></div>
+            <div class="carousel-item"><img src="./2022 25' Coachmen Apex Nano/layout.jpg" class="d-block w-100 rounded-2xl shadow" alt="Layout"></div>
+          </div>
+          <button class="carousel-control-prev" type="button" data-bs-target="#carousel2022" data-bs-slide="prev"><span class="carousel-control-prev-icon"></span></button>
+          <button class="carousel-control-next" type="button" data-bs-target="#carousel2022" data-bs-slide="next"><span class="carousel-control-next-icon"></span></button>
+        </div>
+      </div>
+
+    <div class="row mb-5">
+        <h3>2018 Coachman Freedom Express Liberty Edition</h3>
+		<div class="pricing">
+			<div class="price">$135/night"</div>
+			<div class="price">$850.50/week</div>
+			<a class="btn" onclick="openGallery('2018')">View Gallery</a>
+		</div>
+        <p>Sleeps up to 8 | Queen bed & bunks | Family layout | Fireplace and rock wall</p>
+    </div>
+    <div class="row mb-5">
+        <div id="carousel2018" class="carousel slide" data-bs-wrap="true">
+          <div class="carousel-inner">
+            <div class="carousel-item active"><img src="./2018 32' Coachman Freedom Express Liberty Edition/main.jpg" class="d-block w-100 rounded-2xl shadow" alt="Main view of 2018 Coachman Freedom Express"></div>
+            <div class="carousel-item"><img src="./2018 32' Coachman Freedom Express Liberty Edition/ext-1.jpg" class="d-block w-100 rounded-2xl shadow" alt="Exterior view"></div>
+            <div class="carousel-item"><img src="./2018 32' Coachman Freedom Express Liberty Edition/int-1.jpg" class="d-block w-100 rounded-2xl shadow" alt="Interior view"></div>
+            <div class="carousel-item"><img src="./2018 32' Coachman Freedom Express Liberty Edition/layout.jpg" class="d-block w-100 rounded-2xl shadow" alt="Layout"></div>
+          </div>
+          <button class="carousel-control-prev" type="button" data-bs-target="#carousel2018" data-bs-slide="prev"><span class="carousel-control-prev-icon"></span></button>
+          <button class="carousel-control-next" type="button" data-bs-target="#carousel2018" data-bs-slide="next"><span class="carousel-control-next-icon"></span></button>
+        </div>
+    </div>
+
+    <div class="card">
+      <h3>Request a Quote</h3>
+	  <div class="small">Choose camper, enter dates, and tell us where you're going. We'll send a quote that will include delivery fees and any extras.</div>
+      <form action="mailto:happyhookerrentals@gmail.com" method="post" enctype="text/plain" class="mt-3">
+        <div class="row mb-3">
+          <div class="col-md-6"><input type="text" class="form-control" name="name" placeholder="Your Name" required></div>
+		</div>
+		<div class="row mb-3">
+          <div class="col-md-6"><input type="email" class="form-control" name="email" placeholder="Your Email" required></div>
+        </div>
+        <div class="row mb-3">
+          <div class="col-md-6"><input type="date" class="form-control" name="start date" placeholder="Rental Start Date" required></div>
+		</div>
+        <div class="row mb-3">
+          <div class="col-md-6"><input type="date" class="form-control" name="end date" placeholder="Rental End Date" required></div>
+		</div>
+		<div class="row mb-3">
+          <div class="col-md-6"><input type="text" class="form-control" name="campground" placeholder="Campground Location" required></div>
+        </div>
+        <div class="row mb-3">
+          <div class="col-md-6">
+            <select class="form-select" name="camper">
+              <option value="2022 Coachmen Apex Nano">25' 2022 Coachmen Apex Nano (sleeps 6)</option>
+              <option value="2018 Coachman Freedom Express">32' 2018 Coachman Freedom Express (sleeps 8)</option>
+            </select>
+          </div>
+		</div>
+		<div class="row mb-3">
+          <div class="col-md-6">
+            <select class="form-select" name="septic">
+              <option value="">Does site have septic?</option>
+              <option value="Yes">Yes</option>
+              <option value="No">No</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn" type="submit">Send Quote Request</button>
+      </form>
+    </div>
+	<div class="card">
+      <h3>How Delivery Works</h3>
+      <p class="small">
+        We deliver to your campground and set up the camper so it is walk-in ready.
+        Dropoff and pickup is scheduled based on campground check-in and check-out times.
+        Delivery fees vary by distance at <strong>$1.90/mile</strong> away from Milford, NH with a
+        <strong>$135 minimum</strong> — request a quote for exact delivery pricing.
+      </p>
+    </div>
+	<div class="text-center my-5">
+	  <footer>
+      <div class="small">
+		<p>© Happy Hooker Rentals — Serving happy campers since 2019.<br>
+		Shane Hooker (owner/operator)<br>
+		Email: <a class="link" href="mailto:happyhookerrentals@gmail.com">happyhookerrentals@gmail.com</a> Text/Call: 603-320-5247<br>
+		Venmo: @shanehooker653
+	  </div>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Gallery Modal -->
+  <div class="modal fade" id="galleryModal" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Photo Gallery</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body text-center">
+          <img id="mainImage" src="" class="img-fluid mb-3 rounded-3 shadow" alt="Gallery image" />
+          <div id="thumbContainer" class="d-flex flex-wrap justify-content-center gap-2"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // Carousel auto-slide on desktop, swipe on mobile
+    document.addEventListener('DOMContentLoaded', () => {
+      const carousels = document.querySelectorAll('.carousel');
+      carousels.forEach(carouselEl => {
+        let touchStartX = 0, touchEndX = 0;
+        carouselEl.addEventListener('touchstart', e => touchStartX = e.changedTouches[0].screenX);
+        carouselEl.addEventListener('touchend', e => {
+          touchEndX = e.changedTouches[0].screenX;
+          if (touchEndX < touchStartX - 50) carouselEl.querySelector('.carousel-control-next')?.click();
+          if (touchEndX > touchStartX + 50) carouselEl.querySelector('.carousel-control-prev')?.click();
+        });
+
+        if (window.innerWidth >= 768) {
+          new bootstrap.Carousel(carouselEl, { interval: 4000, ride: 'carousel', wrap: true, pause: 'hover' });
+        } else {
+          new bootstrap.Carousel(carouselEl, { interval: false, ride: false, wrap: true });
+        }
+      });
+    });
+
+    // Popup gallery
+    function openGallery(year) {
+      const galleryModal = new bootstrap.Modal(document.getElementById('galleryModal'));
+      const thumbContainer = document.getElementById('thumbContainer');
+      const mainImage = document.getElementById('mainImage');
+
+      const paths = {
+        '2018': "./2018 32' Coachman Freedom Express Liberty Edition/",
+        '2022': "./2022 25' Coachmen Apex Nano/"
+      };
+
+      const imageFiles = ['main.jpg', 'layout.jpg'];
+      if (year === '2018') {
+        for (let i = 1; i <= 3; i++) imageFiles.push(`ext-${i}.jpg`);
+        for (let i = 1; i <= 12; i++) imageFiles.push(`int-${i}.jpg`);
+      } else {
+        for (let i = 1; i <= 5; i++) imageFiles.push(`ext-${i}.jpg`);
+        for (let i = 1; i <= 12; i++) imageFiles.push(`int-${i}.jpg`);
+      }
+
+      thumbContainer.innerHTML = '';
+      mainImage.src = paths[year] + imageFiles[0];
+
+      imageFiles.forEach(file => {
+        const thumb = document.createElement('img');
+        thumb.src = paths[year] + file;
+        thumb.className = 'gallery-thumb rounded shadow-sm';
+        thumb.onclick = () => mainImage.src = thumb.src;
+        thumbContainer.appendChild(thumb);
+      });
+
+      galleryModal.show();
+    }
+  </script>
+</body>
+</html>
