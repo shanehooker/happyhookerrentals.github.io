@@ -11,60 +11,168 @@
       background-color: #f9f9f9;
       color: #222;
     }
+
     header {
       background-color: #004aad;
       color: white;
       text-align: center;
       padding: 1.5rem;
     }
+
     .carousel img {
       height: 420px;
       object-fit: cover;
     }
+
+    #galleryModal .modal-dialog {
+      max-width: 90%;
+    }
+
+    #mainImageContainer {
+      position: relative;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    #mainImage {
+      max-width: 100%;
+      max-height: 70vh;
+      border-radius: 8px;
+      object-fit: contain;
+    }
+
+    /* Next / Prev buttons */
+    .gallery-nav-btn {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      background-color: rgba(0, 0, 0, 0.5);
+      color: white;
+      border: none;
+      padding: 10px 14px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 20px;
+      transition: background 0.2s;
+      z-index: 10;
+    }
+
+    .gallery-nav-btn:hover {
+      background-color: rgba(0, 0, 0, 0.7);
+    }
+
+    #prevBtn {
+      left: 15px;
+    }
+
+    #nextBtn {
+      right: 15px;
+    }
+
+    /* ✅ FIXED comment syntax */
+    /* Thumbnails row */
+    #thumbContainer {
+      display: flex;
+      flex-direction: row;
+      overflow-x: auto;
+      gap: 8px;
+      padding: 8px 0;
+      scrollbar-width: thin;
+    }
+
     .gallery-thumb {
-      width: 100px;
+      width: 90px;
       height: 70px;
       object-fit: cover;
       cursor: pointer;
+      opacity: 0.7;
+      transition: transform 0.2s, opacity 0.2s;
     }
-	.btn{background:#000;color:#fff;padding:10px 14px;border-radius:8px;text-decoration:none;font-weight:600}
-	.pricing{display:flex;gap:12px;flex-wrap:wrap;margin-top:10px}
-	.price{background:#004aad;color:#fff;padding:10px;border-radius:8px;font-weight:700}
-	.card{background:#fff;padding:18px;border-radius:12px;box-shadow:0 6px 18px rgba(11,26,43,0.06)}
-	/* Responsive text sizing for mobile */
-	@media (max-width: 992px) {
-	  body {
-		font-size: 18px;
-		line-height: 1.5;
-	  }
-	  h1 { font-size: 1.8rem; }
-	  h2, h3 { font-size: 1.4rem; }
-	  p, li, a, button, input, select {
-		font-size: 1rem;
-	  }
-	}
 
-	@media (max-width: 600px) {
-	  body {
-		font-size: 20px;
-	  }
-	  h1 { font-size: 2rem; }
-	  h2, h3 { font-size: 1.6rem; }
-	  p, li, a, button, input, select {
-		font-size: 1.1rem;
-	  }
-	  header {
-		padding: 1rem;
-	  }
-	  .btn {
-		padding: 12px 18px;
-		font-size: 1rem;
-	  }
-	  .carousel img {
-		height: auto;
-		max-height: 320px;
-	  }
-	}
+    .gallery-thumb:hover {
+      transform: scale(1.05);
+      opacity: 1;
+    }
+
+    .active-thumb {
+      border: 3px solid #007bff;
+      opacity: 1;
+    }
+
+    .btn {
+      background: #000;
+      color: #fff;
+      padding: 10px 14px;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .pricing {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    .price {
+      background: #004aad;
+      color: #fff;
+      padding: 10px;
+      border-radius: 8px;
+      font-weight: 700;
+    }
+
+    .card {
+      background: #fff;
+      padding: 18px;
+      border-radius: 12px;
+      box-shadow: 0 6px 18px rgba(11, 26, 43, 0.06);
+    }
+
+    /* Responsive text sizing for mobile */
+    @media (max-width: 992px) {
+      body {
+        font-size: 18px;
+        line-height: 1.5;
+      }
+      h1 {
+        font-size: 1.8rem;
+      }
+      h2, h3 {
+        font-size: 1.4rem;
+      }
+      p, li, a, button, input, select {
+        font-size: 1rem;
+      }
+    }
+
+    @media (max-width: 600px) {
+      body {
+        font-size: 20px;
+      }
+      h1 {
+        font-size: 2rem;
+      }
+      h2, h3 {
+        font-size: 1.6rem;
+      }
+      p, li, a, button, input, select {
+        font-size: 1.1rem;
+      }
+      header {
+        padding: 1rem;
+      }
+      .btn {
+        padding: 12px 18px;
+        font-size: 1rem;
+      }
+      .carousel img {
+        height: auto;
+        max-height: 320px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -230,7 +338,7 @@
   </div>
 
   <!-- Gallery Modal -->
-  <div class="modal fade" id="galleryModal" tabindex="-1">
+    <div class="modal fade" id="galleryModal" tabindex="-1">
     <div class="modal-dialog modal-xl modal-dialog-centered">
       <div class="modal-content">
         <div class="modal-header">
@@ -238,14 +346,20 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body text-center">
-          <img id="mainImage" src="" class="img-fluid mb-3 rounded-3 shadow" alt="Gallery image" />
-          <div id="thumbContainer" class="d-flex flex-wrap justify-content-center gap-2"></div>
+          <div id="mainImageContainer">
+            <button id="prevBtn" class="gallery-nav-btn" aria-label="Previous">&#10094;</button>
+            <img id="mainImage" src="" class="img-fluid mb-3 rounded-3 shadow" alt="Gallery image" />
+            <button id="nextBtn" class="gallery-nav-btn" aria-label="Next">&#10095;</button>
+          </div>
+          <div id="thumbContainer" class="d-flex justify-content-center mt-3"></div>
         </div>
       </div>
     </div>
   </div>
 
+  <!-- ✅ Bootstrap JS -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
   <script>
     // Carousel auto-slide on desktop, swipe on mobile
     document.addEventListener('DOMContentLoaded', () => {
@@ -268,38 +382,64 @@
     });
 
     // Popup gallery
-    function openGallery(year) {
-      const galleryModal = new bootstrap.Modal(document.getElementById('galleryModal'));
-      const thumbContainer = document.getElementById('thumbContainer');
-      const mainImage = document.getElementById('mainImage');
+	function openGallery(year) {
+	  const galleryModal = new bootstrap.Modal(document.getElementById('galleryModal'));
+	  const thumbContainer = document.getElementById('thumbContainer');
+	  const mainImage = document.getElementById('mainImage');
 
-      const paths = {
-        '2018': "./2018 32' Coachman Freedom Express Liberty Edition/",
-        '2022': "./2022 25' Coachmen Apex Nano/"
-      };
+	  const paths = {
+		'2018': "./2018 32' Coachman Freedom Express Liberty Edition/",
+		'2022': "./2022 25' Coachmen Apex Nano/"
+	  };
 
-      const imageFiles = ['main.jpg', 'layout.jpg'];
-      if (year === '2018') {
-        for (let i = 1; i <= 3; i++) imageFiles.push(`ext-${i}.jpg`);
-        for (let i = 1; i <= 12; i++) imageFiles.push(`int-${i}.jpg`);
-      } else {
-        for (let i = 1; i <= 5; i++) imageFiles.push(`ext-${i}.jpg`);
-        for (let i = 1; i <= 12; i++) imageFiles.push(`int-${i}.jpg`);
-      }
+	  const imageFiles = ['main.jpg', 'layout.jpg'];
+	  if (year === '2018') {
+		for (let i = 1; i <= 3; i++) imageFiles.push(`ext-${i}.jpg`);
+		for (let i = 1; i <= 12; i++) imageFiles.push(`int-${i}.jpg`);
+	  } else {
+		for (let i = 1; i <= 5; i++) imageFiles.push(`ext-${i}.jpg`);
+		for (let i = 1; i <= 12; i++) imageFiles.push(`int-${i}.jpg`);
+	  }
 
-      thumbContainer.innerHTML = '';
-      mainImage.src = paths[year] + imageFiles[0];
+	  thumbContainer.innerHTML = '';
+	  let currentIndex = 0;
 
-      imageFiles.forEach(file => {
-        const thumb = document.createElement('img');
-        thumb.src = paths[year] + file;
-        thumb.className = 'gallery-thumb rounded shadow-sm';
-        thumb.onclick = () => mainImage.src = thumb.src;
-        thumbContainer.appendChild(thumb);
-      });
+	  function showImage(index) {
+		currentIndex = (index + imageFiles.length) % imageFiles.length; // loop
+		mainImage.src = paths[year] + imageFiles[currentIndex];
+		// Highlight selected thumbnail
+		document.querySelectorAll('.gallery-thumb').forEach((t, i) => {
+		  t.classList.toggle('active-thumb', i === currentIndex);
+		});
+	  }
 
-      galleryModal.show();
-    }
-  </script>
+	  // Populate thumbnails
+	  imageFiles.forEach((file, i) => {
+		const thumb = document.createElement('img');
+		thumb.src = paths[year] + file;
+		thumb.className = 'gallery-thumb rounded shadow-sm';
+		thumb.onclick = () => showImage(i);
+		thumbContainer.appendChild(thumb);
+	  });
+
+	  // Show first image
+	  showImage(0);
+	  
+	  // Navigation buttons
+	  prevBtn.onclick = () => showImage(currentIndex - 1);
+	  nextBtn.onclick = () => showImage(currentIndex + 1);
+
+	  // Swipe gesture for mobile
+	  let touchStartX = 0, touchEndX = 0;
+	  mainImage.addEventListener('touchstart', e => touchStartX = e.changedTouches[0].screenX);
+	  mainImage.addEventListener('touchend', e => {
+		touchEndX = e.changedTouches[0].screenX;
+		if (touchEndX < touchStartX - 50) showImage(currentIndex + 1); // swipe left
+		if (touchEndX > touchStartX + 50) showImage(currentIndex - 1); // swipe right
+	  });
+
+	  galleryModal.show();
+	}
+	</script>
 </body>
 </html>
