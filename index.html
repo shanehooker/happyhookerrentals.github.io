@@ -12,13 +12,10 @@
       color: #222;
     }
 	.header-logo {
-	  position: absolute;
-	  top: 50%;
-	  right: 20px;
-	  transform: translateY(-50%);
+	  display: block;
+	  margin: 0 auto;
 	  height: 170px;
 	  width: auto;
-	  pointer-events: none;
 	}
 
 	@media (max-width: 768px) {
@@ -33,11 +30,10 @@
 		flex: 1 1 100%;
 	  }
 	  .header-logo {
-		position: static;
 		display: block;
-		margin: 10px auto 0;
-		transform: none;
+		margin: 0 auto 0;
 		height: 80px;
+		width: auto;
 	  }
 	}
 
@@ -46,6 +42,7 @@
       color: white;
 	  position: relative;
 	  overflow: hidden;
+	  text-align: center
     }
 
     .carousel img {
@@ -207,13 +204,11 @@
 <body>
 <header class="site-header position-relative text-center py-4">
   <div class="container position-relative">
-    <h1 class="mb-2">Happy Hooker Rentals</h1>
+    <img src="./HappyHookerLogo.png" alt="Happy Hooker Rentals Logo" class="header-logo">
     <p>Affordable RV Rentals Delivered to Your Campsite in New England</p>
     <a class="btn" href="mailto:happyhookerrentals@gmail.com">Email Us</a>
 	<a class="btn" href="https://www.google.com/search?client=firefox-b-1-d&sca_esv=4e1199e6e2dd9208&channel=entpr&biw=1920&bih=893&sxsrf=AE3TifPsnyJRRGH-DwkujF0hM1UfIiDLfA:1761569906831&si=AMgyJEtREmoPL4P1I5IDCfuA8gybfVI2d5Uj7QMwYCZHKDZ-E1qScmLsg8Wy9ZJ2vlQrPiR6m1-Mc5nIBfF0VdcFPtP0xEP3u1XonRJACecnqLDFIeLVLmTYEwbJCZp5dLjvE6vuQrqhoMyuJPNcsKxr1ToSJsovMQ%3D%3D&q=Happy+Hooker+Rentals+Reviews&sa=X&ved=2ahUKEwiEvqykt8SQAxX15MkDHUsbJO0Q0bkNegQIHxAD">See Our Reviews</a>
 	<a href="faq.html" class="btn btn-faq">FAQ</a>
-    <!-- Logo positioned on the right -->	
-    <img src="./HappyHookerLogo.png" alt="Happy Hooker Rentals Logo" class="header-logo">
   </div>
 </header>
   <div class="container position-relative text-center">
