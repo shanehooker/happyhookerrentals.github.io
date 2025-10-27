@@ -30,7 +30,7 @@
 	.btn{background:#000;color:#fff;padding:10px 14px;border-radius:8px;text-decoration:none;font-weight:600}
 	.pricing{display:flex;gap:12px;flex-wrap:wrap;margin-top:10px}
 	.price{background:#004aad;color:#fff;padding:10px;border-radius:8px;font-weight:700}
-	.card{background:var(--card);padding:18px;border-radius:12px;box-shadow:0 6px 18px rgba(11,26,43,0.06)}
+	.card{background:#fff;padding:18px;border-radius:12px;box-shadow:0 6px 18px rgba(11,26,43,0.06)}
 	/* Responsive text sizing for mobile */
 	@media (max-width: 992px) {
 	  body {
@@ -77,51 +77,56 @@
   </header>
 
   <div class="container my-5">
-    <div class="row-mb-5">
-        <h3>25' 2022 Coachmen Apex Nano</h3>
-		<div class="pricing">
-            <div class="price">$125/night</div>
-            <div class="price">$787.50/week</div>
-			<a class="btn" onclick="openGallery('2022')">View Gallery</a>
-        </div>
-        <p>Sleeps up to 6 | Queen bed & bunks | Outdoor refrigerator and grill | Slideout & awning</p>
-    </div>
-    <div class="row mb-5">
-        <div id="carousel2022" class="carousel slide" data-bs-wrap="true">
-          <div class="carousel-inner">
-            <div class="carousel-item active">
-              <img src="./2022 25' Coachmen Apex Nano/main.jpg" class="d-block w-100 rounded-2xl shadow" alt="Main view of 2022 Coachmen Apex Nano">
-            </div>
-            <div class="carousel-item"><img src="./2022 25' Coachmen Apex Nano/ext-1.jpg" class="d-block w-100 rounded-2xl shadow" alt="Exterior view"></div>
-            <div class="carousel-item"><img src="./2022 25' Coachmen Apex Nano/int-1.jpg" class="d-block w-100 rounded-2xl shadow" alt="Interior view"></div>
-            <div class="carousel-item"><img src="./2022 25' Coachmen Apex Nano/layout.jpg" class="d-block w-100 rounded-2xl shadow" alt="Layout"></div>
-          </div>
-          <button class="carousel-control-prev" type="button" data-bs-target="#carousel2022" data-bs-slide="prev"><span class="carousel-control-prev-icon"></span></button>
-          <button class="carousel-control-next" type="button" data-bs-target="#carousel2022" data-bs-slide="next"><span class="carousel-control-next-icon"></span></button>
-        </div>
-      </div>
-
-    <div class="row mb-5">
-        <h3>2018 Coachman Freedom Express Liberty Edition</h3>
-		<div class="pricing">
-			<div class="price">$135/night"</div>
-			<div class="price">$850.50/week</div>
-			<a class="btn" onclick="openGallery('2018')">View Gallery</a>
+    <div class="card">
+		<div class="row-mb-5">
+			<h3>25' 2022 Coachmen Apex Nano</h3>
+			<div class="pricing">
+				<div class="price">$125/night</div>
+				<div class="price">$787.50/week</div>
+				<a class="btn" onclick="openGallery('2022')">View Gallery</a>
+			</div>
 		</div>
-        <p>Sleeps up to 8 | Queen bed & bunks | Family layout | Fireplace and rock wall | Slideout & awning</p>
-    </div>
-    <div class="row mb-5">
-        <div id="carousel2018" class="carousel slide" data-bs-wrap="true">
-          <div class="carousel-inner">
-            <div class="carousel-item active"><img src="./2018 32' Coachman Freedom Express Liberty Edition/main.jpg" class="d-block w-100 rounded-2xl shadow" alt="Main view of 2018 Coachman Freedom Express"></div>
-            <div class="carousel-item"><img src="./2018 32' Coachman Freedom Express Liberty Edition/ext-1.jpg" class="d-block w-100 rounded-2xl shadow" alt="Exterior view"></div>
-            <div class="carousel-item"><img src="./2018 32' Coachman Freedom Express Liberty Edition/int-1.jpg" class="d-block w-100 rounded-2xl shadow" alt="Interior view"></div>
-            <div class="carousel-item"><img src="./2018 32' Coachman Freedom Express Liberty Edition/layout.jpg" class="d-block w-100 rounded-2xl shadow" alt="Layout"></div>
-          </div>
-          <button class="carousel-control-prev" type="button" data-bs-target="#carousel2018" data-bs-slide="prev"><span class="carousel-control-prev-icon"></span></button>
-          <button class="carousel-control-next" type="button" data-bs-target="#carousel2018" data-bs-slide="next"><span class="carousel-control-next-icon"></span></button>
-        </div>
-    </div>
+		<div class="row mb-5">
+			<p>Sleeps up to 6 | Queen bed & bunks | Outdoor refrigerator and grill | Slideout & awning</p>
+			<div id="carousel2022" class="carousel slide" data-bs-wrap="true">
+			  <div class="card">
+				  <div class="carousel-inner">
+					<div class="carousel-item active"><img src="./2022 25' Coachmen Apex Nano/main.jpg" class="d-block w-100 rounded-2xl shadow" alt="Main view of 2022 Coachmen Apex Nano"></div>
+					<div class="carousel-item"><img src="./2022 25' Coachmen Apex Nano/ext-1.jpg" class="d-block w-100 rounded-2xl shadow" alt="Exterior view"></div>
+					<div class="carousel-item"><img src="./2022 25' Coachmen Apex Nano/int-1.jpg" class="d-block w-100 rounded-2xl shadow" alt="Interior view"></div>
+					<div class="carousel-item"><img src="./2022 25' Coachmen Apex Nano/layout.jpg" class="d-block w-100 rounded-2xl shadow" alt="Layout"></div>
+				  </div>
+				  <button class="carousel-control-prev" type="button" data-bs-target="#carousel2022" data-bs-slide="prev"><span class="carousel-control-prev-icon"></span></button>
+				  <button class="carousel-control-next" type="button" data-bs-target="#carousel2022" data-bs-slide="next"><span class="carousel-control-next-icon"></span></button>
+			  </div>
+			</div>
+		</div>
+	</div>
+	<div class="card">
+		<div class="row mb-5">
+			<h3>2018 Coachman Freedom Express Liberty Edition</h3>
+			<div class="pricing">
+				<div class="price">$135/night"</div>
+				<div class="price">$850.50/week</div>
+				<a class="btn" onclick="openGallery('2018')">View Gallery</a>
+			</div>
+		</div>
+		<div class="row mb-5">
+			<p>Sleeps up to 8 | Queen bed & bunks | Family layout | Fireplace and rock wall | Slideout & awning</p>
+			<div id="carousel2018" class="carousel slide" data-bs-wrap="true">
+			  <div class="card">
+				  <div class="carousel-inner">
+					<div class="carousel-item active"><img src="./2018 32' Coachman Freedom Express Liberty Edition/main.jpg" class="d-block w-100 rounded-2xl shadow" alt="Main view of 2018 Coachman Freedom Express"></div>
+					<div class="carousel-item"><img src="./2018 32' Coachman Freedom Express Liberty Edition/ext-1.jpg" class="d-block w-100 rounded-2xl shadow" alt="Exterior view"></div>
+					<div class="carousel-item"><img src="./2018 32' Coachman Freedom Express Liberty Edition/int-1.jpg" class="d-block w-100 rounded-2xl shadow" alt="Interior view"></div>
+					<div class="carousel-item"><img src="./2018 32' Coachman Freedom Express Liberty Edition/layout.jpg" class="d-block w-100 rounded-2xl shadow" alt="Layout"></div>
+				  </div>
+				  <button class="carousel-control-prev" type="button" data-bs-target="#carousel2018" data-bs-slide="prev"><span class="carousel-control-prev-icon"></span></button>
+				  <button class="carousel-control-next" type="button" data-bs-target="#carousel2018" data-bs-slide="next"><span class="carousel-control-next-icon"></span></button>
+			  </div>
+			</div>
+		</div>
+	</div>
 
     <div class="card">
       <h3>Request a Quote</h3>
