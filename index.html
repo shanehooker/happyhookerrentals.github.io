@@ -11,12 +11,41 @@
       background-color: #f9f9f9;
       color: #222;
     }
+	.header-logo {
+	  position: absolute;
+	  top: 50%;
+	  right: 20px;
+	  transform: translateY(-50%);
+	  height: 170px;
+	  width: auto;
+	  pointer-events: none;
+	}
+
+	@media (max-width: 768px) {
+	  .logo-img {
+		height: 70px;
+		margin-top: 10px;
+	  }
+	  header {
+		text-align: center;
+	  }
+	  .header-text {
+		flex: 1 1 100%;
+	  }
+	  .header-logo {
+		position: static;
+		display: block;
+		margin: 10px auto 0;
+		transform: none;
+		height: 80px;
+	  }
+	}
 
     header {
       background-color: #004aad;
       color: white;
-      text-align: center;
-      padding: 1.5rem;
+	  position: relative;
+	  overflow: hidden;
     }
 
     .carousel img {
@@ -176,14 +205,21 @@
   </style>
 </head>
 <body>
-  <header>
-    <h1>Happy Hooker Rentals</h1>
-    <p>Affordable RV Rentals Delivered to Your Campsite</p>
-	<p>We deliver well-maintained campers in the New England area with competive nightly & weekly rates.
-	Happy Hookers love their happy campers and our return customers receive 5% off.</p>
-	<a class="btn" href="mailto:happyhookerrentals@gmail.com">Email Us</a>
-  </header>
-
+<header class="site-header position-relative text-center py-4">
+  <div class="container position-relative">
+    <h1 class="mb-2">Happy Hooker Rentals</h1>
+    <p>Affordable RV Rentals Delivered to Your Campsite in New England</p>
+    <a class="btn" href="mailto:happyhookerrentals@gmail.com">Email Us</a>
+	<a class="btn" href="https://www.google.com/search?client=firefox-b-1-d&sca_esv=4e1199e6e2dd9208&channel=entpr&biw=1920&bih=893&sxsrf=AE3TifPsnyJRRGH-DwkujF0hM1UfIiDLfA:1761569906831&si=AMgyJEtREmoPL4P1I5IDCfuA8gybfVI2d5Uj7QMwYCZHKDZ-E1qScmLsg8Wy9ZJ2vlQrPiR6m1-Mc5nIBfF0VdcFPtP0xEP3u1XonRJACecnqLDFIeLVLmTYEwbJCZp5dLjvE6vuQrqhoMyuJPNcsKxr1ToSJsovMQ%3D%3D&q=Happy+Hooker+Rentals+Reviews&sa=X&ved=2ahUKEwiEvqykt8SQAxX15MkDHUsbJO0Q0bkNegQIHxAD">See Our Reviews</a>
+    <!-- Logo positioned on the right -->
+    <img src="./HappyHookerLogo.png" alt="Happy Hooker Rentals Logo" class="header-logo">
+  </div>
+</header>
+  <div class="container position-relative text-center">
+	We deliver well-maintained campers in the New England area with competitive nightly & weekly rates.<br>
+	Happy Hookers love their happy campers and our return customers receive 5% off.<br>
+	Browse our camper options and request a quote for your next adventure.
+  </div>
   <div class="container my-5">
     <div class="card">
 		<div class="row-mb-5">
