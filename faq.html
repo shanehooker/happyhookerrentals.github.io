@@ -29,6 +29,9 @@
 	  header {
 		text-align: center;
 	  }
+	  body header h1 {
+	    font-size: .8rem;
+      }
 	  .header-text {
 		flex: 1 1 100%;
 	  }
@@ -41,6 +44,32 @@
 	  }
 	}
 
+    @media (max-width: 600px) {
+      .faq-container {
+        margin: 1rem;
+        padding: 1.5rem;
+      }
+	  .logo-img {
+		height: 70px;
+		margin-top: 10px;
+	  }
+	  header {
+		text-align: center;
+	  }
+	  body header h1 {
+	    font-size: .8rem;
+      }
+	  .header-text {
+		flex: 1 1 100%;
+	  }
+	  .header-logo {
+		position: static;
+		display: block;
+		margin: 10px auto 0;
+		transform: none;
+		height: 80px;
+	  }
+    }
     header {
       background-color: #004aad;
       color: white;
@@ -91,22 +120,16 @@
       margin: 2rem 0;
     }
 
-    @media (max-width: 600px) {
-      .faq-container {
-        margin: 1rem;
-        padding: 1.5rem;
-      }
-    }
   </style>
 </head>
 
 <body>
   <header>
     <h1>Frequently Asked Questions</h1>
+	<img src="./HappyHookerGnomeLogo.png" alt="Happy Hooker Gnome" class="header-logo">
   </header>
 
   <main class="faq-container">
-  	<img src="./HappyHookerGnomeLogo.png" alt="Happy Hooker Gnome" class="header-logo">
     <div class="faq-item">
       <h3>Do you deliver anywhere in New England?</h3>
       <p>No, not just anywhere. I prefer to setup only at approved campground sites and do not allow the camper to be moved once setup. There are some places I will consider such as fairgrounds, some festivals, and other events. My preferred distance of travel is within 69 miles of Milford, NH which keeps my travel time under 2 hours one-way and the cost you pay for delivery to a minimum. I charge $1.90/mi from Milford, NH and have a minimum $135 delivery fee. About the furthest I will go is North Conway, NH or North Waterford, ME.</p>
