@@ -9,48 +9,172 @@
     body { background-color: #f8f9fa; }
     .container { max-width: 700px; margin-top: 50px; }
     h1 { text-align: center; margin-bottom: 1.5rem; }
+	.btn {
+      background: #008000;
+      color: #fff;
+      padding: 10px;
+      border-radius: 8px;
+      font-weight: 600;
+    }
+	.header-logo {
+		position: static;
+		display: block;
+		margin: 10px auto 0;
+		transform: none;
+		height: 170px;
+	}
+	.card {
+      background: #fff;
+      padding: 18px;
+      border-radius: 12px;
+      box-shadow: 0 6px 18px rgba(11, 26, 43, 0.06);
+    }
+	.back-button {
+      display: inline-block;
+      background-color: #004aad;
+      color: white;
+      padding: 0.75rem 1.25rem;
+      border-radius: 8px;
+      text-decoration: none;
+      transition: background 0.3s;
+    }
+
+    .back-button:hover {
+      background-color: #003080;
+    }
+
+    .back-container {
+      text-align: center;
+      margin: 2rem 0;
+    }
+	    /* Responsive text sizing for mobile */
+    @media (max-width: 992px) {
+      body {
+        font-size: 18px;
+        line-height: 1.5;
+      }
+      h1 {
+        font-size: 1.8rem;
+      }
+      h2, h3 {
+        font-size: 1.4rem;
+      }
+      p, li, a, button, input, select {
+        font-size: 1rem;
+      }
+    }
+
+    @media (max-width: 600px) {
+      body {
+        font-size: 20px;
+      }
+      h1 {
+        font-size: 2rem;
+      }
+      h2, h3 {
+        font-size: 1.6rem;
+      }
+      p, li, a, button, input, select {
+        font-size: 1.1rem;
+      }
+      header {
+        padding: 1rem;
+      }
+      .btn {
+        padding: 12px 18px;
+        font-size: 1rem;
+      }
+      .carousel img {
+        height: auto;
+        max-height: 320px;
+      }
+    }
   </style>
 </head>
 <body>
-  <div class="container bg-white p-4 rounded shadow">
-    <h1>Request a Quote</h1>
-    <form id="quoteForm" action="https://formspree.io/f/mzzkzydn" method="POST">
-      <div class="mb-3">
-        <label for="camper" class="form-label">Camper Choice</label>
-        <select id="camper" name="camper" class="form-select" required>
-          <option value="2022 Coachmen Apex Nano">2022 Coachmen Apex Nano (sleeps up to 6)</option>
-          <option value="2018 Coachmen Freedom Express Liberty Edition">2018 Coachmen Freedom Express Liberty Edition (sleeps up to 8)</option>
-        </select>
-      </div>
-      <div class="row">
-        <div class="col-md-6 mb-3">
-          <input type="text" class="form-control" name="name" placeholder="Full Name" required>
-        </div>
-        <div class="col-md-6 mb-3">
-          <input type="email" class="form-control" name="email" placeholder="Email Address" required>
-        </div>
-      </div>
-      <div class="row">
-        <div class="col-md-6 mb-3">
-          <input type="date" class="form-control" name="start_date" required>
-        </div>
-        <div class="col-md-6 mb-3">
-          <input type="date" class="form-control" name="end_date" required>
-        </div>
-      </div>
-      <div class="mb-3">
-        <input type="text" class="form-control" name="campground_location" placeholder="Campground Location" required>
-      </div>
-      <div class="mb-3">
-        <input type="text" class="form-control" name="site_info" placeholder="Campsite Info (Full Hookup, Electric, etc.)" required>
-      </div>
-      <div class="d-flex justify-content-between">
-        <button type="button" class="btn btn-outline-secondary" onclick="window.location.href='index.html'">Back to Main Page</button>
-        <button type="submit" class="btn btn-primary">Submit Request</button>
-      </div>
-    </form>
-    <div id="formMessage" class="alert alert-success mt-3 d-none">Your request has been submitted!</div>
-  </div>
+  <div class="container bg-white p-4 rounded text-center shadow">
+	<div class="card">
+		<h3>Request a Quote</h3>
+		<img src="./HappyHookerGnomeLogo.png" alt="Happy Hooker Gnome" class="header-logo">	
+		<div class="small">Choose camper, enter dates, and tell us where you're going. We'll send a quote that will include delivery fees and any extras.</div>
+		<form id="quoteForm" action="https://formspree.io/f/mzzkzydn" method="POST">
+		<div class="row mb-3">
+		  <input type="text" class="form-control" name="name" placeholder="Your Name" required>
+		</div>
+		<div class="row mb-3">
+		  <input type="email" class="form-control" name="email" placeholder="Your Email" required>
+		</div>
+		<div class="row mb-3">
+		  <div class="col-md-6">
+			<label for="start-date" class="form-label">Start Date (mm/dd/yyyy)</label>
+			<input type="date" id="start-date" class="form-control" name="start date" required>
+		  </div>
+		  <div class="col-md-6">
+			<label for="end-date" class="form-label">End Date (mm/dd/yyyy)</label>
+			<input type="date" id="end-date" class="form-control" name="end date" required>
+		  </div>
+		</div>
+		<div class="row mb-3">
+		  <input type="text" class="form-control" name="campground" placeholder="Campground Location" required>
+		</div>
+		<div class="row mb-3">
+			<select class="form-select" name="camper">
+			  <option value="2022 Coachmen Apex Nano">25' 2022 Coachmen Apex Nano (sleeps 6)</option>
+			  <option value="2018 Coachman Freedom Express">32' 2018 Coachman Freedom Express (sleeps 8)</option>
+			</select>
+		</div>
+		<div class="row mb-3">
+			<select class="form-select" name="septic">
+			  <option value="">Does site have septic?</option>
+			  <option value="Yes">Yes</option>
+			  <option value="No">No</option>
+			</select>
+		</div>
+		<a class="btn" type="submit">Send Quote Request</a>
+		</form>
+		<!-- Hidden message area -->
+		<div id="responseMessage" class="alert alert-success mt-3" style="display:none;">
+		✅ Your request was submitted successfully! We'll contact you soon.
+		</div>
+		<div id="errorMessage" class="alert alert-danger mt-3" style="display:none;">
+		❌ Something went wrong — please try again later.
+		</div>
+	</div>
+	<div class="back-container">
+		<a href="index.html" class="back-button">← Back to Main Page</a>
+	</div>
+	<script>
+	document.getElementById('quoteForm').addEventListener('submit', async function(e) {
+	  e.preventDefault();
+	  const form = e.target;
+	  const responseMessage = document.getElementById('responseMessage');
+	  const errorMessage = document.getElementById('errorMessage');
+	  
+	  responseMessage.style.display = 'none';
+	  errorMessage.style.display = 'none';
+	  
+	  try {
+		const response = await fetch(form.action, {
+		  method: 'POST',
+		  body: new FormData(form),
+		  headers: { 'Accept': 'application/json' }
+		});
+
+		if (response.ok) {
+		  form.reset();
+		  responseMessage.style.display = 'block';
+		  setTimeout(() => responseMessage.style.display = 'none', 6000);
+		} else {
+		  throw new Error('Network response not OK');
+		}
+	  } catch (error) {
+		console.error('Form submission error:', error);
+		errorMessage.style.display = 'block';
+		setTimeout(() => errorMessage.style.display = 'none', 6000);
+	  }
+	});
+	</script>
+
 
   <script>
     // Prefill camper choice based on query parameter
