@@ -66,7 +66,7 @@
 
     @media (max-width: 600px) {
       body {
-        font-size: 20px;
+        font-size: 16px;
       }
       h1 {
         font-size: 2rem;
@@ -75,7 +75,7 @@
         font-size: 1.6rem;
       }
       p, li, a, button, input, select {
-        font-size: 1.1rem;
+        font-size: 1rem;
       }
       header {
         padding: 1rem;
@@ -84,54 +84,56 @@
         padding: 12px 18px;
         font-size: 1rem;
       }
-      .carousel img {
-        height: auto;
-        max-height: 320px;
-      }
     }
   </style>
 </head>
 <body>
   <div class="container bg-white p-4 rounded text-center shadow">
 	<div class="card">
-		<h3>Request a Quote</h3>
-		<img src="./HappyHookerGnomeLogo.png" alt="Happy Hooker Gnome" class="header-logo">	
-		<div class="small">Choose camper, enter dates, and tell us where you're going. We'll send a quote that will include delivery fees and any extras.</div>
-		<form id="quoteForm" action="https://formspree.io/f/mzzkzydn" method="POST">
-		<div class="row mb-3">
-		  <input type="text" class="form-control" name="name" placeholder="Your Name" required>
-		</div>
-		<div class="row mb-3">
-		  <input type="email" class="form-control" name="email" placeholder="Your Email" required>
-		</div>
-		<div class="row mb-3">
-		  <div class="col-md-6">
-			<label for="start-date" class="form-label">Start Date (mm/dd/yyyy)</label>
-			<input type="date" id="start-date" class="form-control" name="start date" required>
-		  </div>
-		  <div class="col-md-6">
-			<label for="end-date" class="form-label">End Date (mm/dd/yyyy)</label>
-			<input type="date" id="end-date" class="form-control" name="end date" required>
-		  </div>
-		</div>
-		<div class="row mb-3">
-		  <input type="text" class="form-control" name="campground" placeholder="Campground Location" required>
-		</div>
-		<div class="row mb-3">
-			<select class="form-select" name="camper">
-			  <option value="2022 Coachmen Apex Nano">25' 2022 Coachmen Apex Nano (sleeps 6)</option>
-			  <option value="2018 Coachman Freedom Express">32' 2018 Coachman Freedom Express (sleeps 8)</option>
-			</select>
-		</div>
-		<div class="row mb-3">
-			<select class="form-select" name="septic">
-			  <option value="">Does site have septic?</option>
-			  <option value="Yes">Yes</option>
-			  <option value="No">No</option>
-			</select>
-		</div>
-		<a class="btn" type="submit">Send Quote Request</a>
-		</form>
+	  <h3>Request a Quote</h3>
+	  <img src="./HappyHookerGnomeLogo.png" alt="Happy Hooker Gnome" class="header-logo">	
+	  <div class="small">Choose camper, enter dates, and tell us where you're going. We'll send a quote that will include delivery fees and any extras.</div>
+	  <form id="quoteForm" action="https://formspree.io/f/mzzkzydn" method="POST">
+
+      <div class="mb-3">
+        <label for="camper" class="form-label">Camper Choice</label>
+        <select id="camper" name="camper" class="form-select" required>
+          <option value="2022 Coachmen Apex Nano">2022 Coachmen Apex Nano (sleeps up to 6)</option>
+          <option value="2018 Coachmen Freedom Express Liberty Edition">2018 Coachmen Freedom Express Liberty Edition (sleeps up to 8)</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <div class="col-md-6 mb-3">
+          <input type="text" class="form-control" name="name" placeholder="Full Name" required>
+        </div>
+        <div class="col-md-6 mb-3">
+          <input type="email" class="form-control" name="email" placeholder="Email Address" required>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="col-md-6 mb-3">
+		  <label for="start-date" class="form-label">Start Date (mm/dd/yyyy)</label>
+          <input type="date" class="form-control" name="start_date" required>
+        </div>
+        <div class="col-md-6 mb-3">
+		  <label for="end-date" class="form-label">End Date (mm/dd/yyyy)</label>
+          <input type="date" class="form-control" name="end_date" required>
+        </div>
+      </div>
+
+      <div class="mb-3">
+        <input type="text" class="form-control" name="campground_location" placeholder="Campground Location" required>
+      </div>
+
+      <div class="mb-3">
+        <input type="text" class="form-control" name="site_info" placeholder="Campsite Info (Full Hookup, Electric, etc.)" required>
+      </div>
+
+      <button type="submit" class="btn">Submit Request</button>
+    </form>
+
 		<!-- Hidden message area -->
 		<div id="responseMessage" class="alert alert-success mt-3" style="display:none;">
 		✅ Your request was submitted successfully! We'll contact you soon.
@@ -144,6 +146,25 @@
 		<a href="index.html" class="back-button">← Back to Main Page</a>
 	</div>
 	<script>
+    // --- Prefill camper choice & page title based on query parameter ---
+    const params = new URLSearchParams(window.location.search);
+    const camperYear = params.get('camper');
+    const select = document.getElementById('camper');
+    const title = document.getElementById('pageTitle');
+
+    let camperName = '';
+    if (camperYear === '2022') {
+      camperName = '2022 Coachmen Apex Nano';
+      select.value = camperName;
+    } else if (camperYear === '2018') {
+      camperName = '2018 Coachmen Freedom Express Liberty Edition';
+      select.value = camperName;
+    }
+
+    if (camperName) {
+      title.textContent = `Request a Quote for ${camperName}`;
+    }
+
 	document.getElementById('quoteForm').addEventListener('submit', async function(e) {
 	  e.preventDefault();
 	  const form = e.target;
