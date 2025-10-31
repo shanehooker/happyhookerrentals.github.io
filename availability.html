@@ -107,7 +107,7 @@
       }
 
       // ✅ Fetch from your Google Apps Script
-      const apiURL = `https://script.google.com/macros/s/AKfycbzRbm-amjXnzF9Yc4a-6M_FFdlENGQ_HrX5ZgFivzSP3oW8yM3XEKbnYTJCtcArZvY/exec?camper=${encodeURIComponent(camper)}`;
+      const apiURL = `https://script.google.com/macros/s/AKfycbz_sagf02qOlIKf2eGC7an1sq9bqbLgEx03G890blnLMERuITbvFXYD2W556r_iI2E/exec?camper=${encodeURIComponent(camper)}`;
       let events = [];
 
       try {
@@ -116,12 +116,15 @@
           const data = await response.json();
           events = data.map(evt => {
             const lowerTitle = evt.title.toLowerCase();
+			// If "unavailable" or "blocked" appears in event title then it will mark the dates as Not Available
             const isBlocked = lowerTitle.includes("unavailable") || lowerTitle.includes("blocked");
             return {
               title: isBlocked ? "Not Available" : "Booked",
               start: evt.start,
               end: evt.end,
-              color: isBlocked ? "#ff9800" : "#dc3545"
+			  location: evt.location,
+			  description: evt.description,
+              color: isBlocked ? "#ff9800" : "#dc3545",
             };
           });
         } else {
@@ -153,6 +156,7 @@
       const calendarEl = document.getElementById("calendar");
       const calendar = new FullCalendar.Calendar(calendarEl, {
         initialView: "dayGridMonth",
+		displayEventTime: false,
         headerToolbar: { left: "prev,next", center: "title", right: "" },
         height: "auto",
         contentHeight: "auto",
