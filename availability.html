@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Camper Availability</title>
+<style>
+  body {
+    background: #f8f9fa;
+    font-family: "Segoe UI", Arial, sans-serif;
+    margin: 0;
+    padding: 8px;
+  }
+
+  .container {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 0 10px;
+  }
+
+  #calendar {
+    background: white;
+    border-radius: 10px;
+    padding: 6px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+  }
+
+  #calendarTitle {
+    color: #004aad;
+    text-align: center;
+    margin: 8px 0 10px 0;
+    font-size: 1.3rem;
+  }
+
+  .legend {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    gap: 8px;
+  }
+
+  .legend span {
+    display: inline-block;
+    padding: 5px 10px;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 0.9rem;
+  }
+
+  .legend .avail { background: #28a745; }
+  .legend .book { background: #dc3545; }
+
+  /* FullCalendar tweaks */
+  .fc .fc-toolbar-title {
+    font-size: 1.1rem;
+  }
+
+  /* ✅ Responsive adjustments */
+  @media (max-width: 768px) {
+    body {
+      padding: 4px;
+      font-size: 14px;
+    }
+
+    #calendar {
+      padding: 2px;
+      box-shadow: none;
+    }
+
+    #calendarTitle {
+      font-size: 1rem;
+      margin-bottom: 4px;
+    }
+
+    .legend span {
+      font-size: 0.8rem;
+      padding: 4px 8px;
+    }
+
+    .fc .fc-toolbar-title {
+      font-size: 0.9rem;
+    }
+
+    .fc-daygrid-day {
+      padding: 0 !important;
+    }
+
+    .fc-scroller {
+      overflow: hidden !important;
+    }
+
+    /* Reduce calendar margins to fit smaller screens */
+    .fc-daygrid {
+      font-size: 0.75rem;
+    }
+  }
+</style>
+
+</head>
+<body>
+  <div class="container">
+    <h4 id="calendarTitle">Availability</h4>
+    <div id="calendar"></div>
+    <div class="legend">
+      <span class="avail">Available</span>
+      <span class="book">Booked</span>
+    </div>
+  </div>
+
+  <!-- Use the bundled FullCalendar script (includes CSS injection) -->
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.19/index.global.min.js"></script>
+
+  <script>
+  (async function() {
+    const params = new URLSearchParams(window.location.search);
+    const camper = params.get('camper') || '2022';
+
+    const titleMap = {
+      "2022": "Availability for 25' 2022 Apex Nano (sleeps 6)",
+      "2018": "Availability for 32' 2018 Freedom Express (sleeps 10)"
+    };
+    document.getElementById('calendarTitle').textContent = titleMap[camper] || 'Availability';
+
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbzRbm-amjXnzF9Yc4a-6M_FFdlENGQ_HrX5ZgFivzSP3oW8yM3XEKbnYTJCtcArZvY/exec";
+
+    try {
+      const resp = await fetch(`${GAS_URL}?camper=${encodeURIComponent(camper)}`);
+      if (!resp.ok) throw new Error('Network response not ok');
+      const data = await resp.json();
+
+      const booked = data.map(e => {
+        const start = e.start.split('T')[0];
+        const d = new Date(e.end);
+        d.setDate(d.getDate() + 1);
+        const endStr = d.toISOString().split('T')[0];
+        return {
+          start,
+          end: endStr,
+          display: 'background',
+          backgroundColor: '#dc3545'
+        };
+      });
+
+      const available = [];
+      const today = new Date();
+      const startMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+      for (let i = 0; i < 12; i++) {
+        const s = new Date(startMonth.getFullYear(), startMonth.getMonth() + i, 1);
+        const e = new Date(startMonth.getFullYear(), startMonth.getMonth() + i + 1, 1);
+        available.push({
+          start: s.toISOString().split('T')[0],
+          end: e.toISOString().split('T')[0],
+          display: 'background',
+          backgroundColor: '#28a745'
+        });
+      }
+
+      const events = [...available, ...booked];
+
+      const calendarEl = document.getElementById('calendar');
+	  const calendar = new FullCalendar.Calendar(calendarEl, {
+	    initialView: 'dayGridMonth',
+	    headerToolbar: { left: 'prev,next', center: 'title', right: '' },
+	    events,
+	    height: 'auto',
+	    contentHeight: 'auto',
+	    aspectRatio: 1, // keeps it compact
+	    windowResize: function(view) {
+	  	calendar.updateSize(); // auto-resize when device rotates
+	    },
+	  });
+
+      calendar.render();
+
+      if (booked.length) {
+        const earliest = booked.reduce((a,b) => a.start < b.start ? a : b);
+        calendar.gotoDate(earliest.start);
+      }
+    } catch (err) {
+      console.error('Calendar load error:', err);
+      document.getElementById('calendar').innerHTML =
+        '<p style="padding:16px;">Unable to load availability.</p>';
+    }
+  })();
+  </script>
+</body>
+</html>
