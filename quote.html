@@ -131,21 +131,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const camperName = camperMap[camperYear] || "Unknown Camper";
 
+  // Update page text
   document.getElementById("camperDisplay").textContent = camperName;
   document.getElementById("camper").value = camperName;
   document.getElementById("quoteHeader").textContent = `Request a Quote for ${camperName}`;
 
-  // Popup availability window
-  document.getElementById("checkAvailabilityBtn").addEventListener("click", () => {
-    const popupUrl = `availability.html?camper=${encodeURIComponent(camperYear)}`;
-    const w = 900, h = 700;
-    const left = (screen.width / 2) - (w / 2);
-    const top = (screen.height / 2) - (h / 2);
-    window.open(
-      popupUrl,
-      "AvailabilityWindow",
-      `width=${w},height=${h},top=${top},left=${left},resizable=yes,scrollbars=yes`
-    );
+  // ✅ Fix: Define both camper and btn properly
+  const camper = camperYear;  // Pass the year (used in query parameter)
+  const btn = document.getElementById("checkAvailabilityBtn");
+
+  btn.addEventListener('click', () => {
+    const url = `availability.html?camper=${encodeURIComponent(camper)}`;
+    window.location.href = url; // ✅ open in same tab
   });
 });
 
