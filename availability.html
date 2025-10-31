@@ -122,8 +122,9 @@
         // Format events (no description used)
         const formattedEvents = data.map(ev => {
           const shortLoc = ev.location ? ev.location.split(",")[0] : "";
-          const title = ev.title.includes("Blocked") || !ev.location
-            ? "Not Available"
+		  const lowerTitle = ev.title.toLowerCase();
+          const title = lowerTitle.includes("blocked") || lowerTitle.includes("hold") || !ev.location
+            ? `Not Available${shortLoc ? " @" + shortLoc : ""}`
             : `Booked${shortLoc ? " @" + shortLoc : ""}`;
 
           return {
