@@ -5,12 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Camper Availability – Happy Hooker Rentals</title>
 
-  <!-- ✅ FullCalendar (verified working CDN) -->
+  <!-- ✅ FullCalendar -->
   <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.css" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
 
-  <!-- ✅ Bootstrap (for layout/buttons) -->
+  <!-- ✅ Bootstrap -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
   <style>
     body {
@@ -56,7 +57,6 @@
       padding: 0.5rem;
     }
 
-    /* ✅ Mobile responsiveness */
     @media (max-width: 768px) {
       header h3 {
         font-size: 1.1rem;
@@ -88,89 +88,81 @@
     function goBack() {
       const params = new URLSearchParams(window.location.search);
       const camper = params.get("camper") || "";
-      // ✅ Return to quote page, preserving camper
       window.location.href = `quote.html?camper=${encodeURIComponent(camper)}`;
     }
 
     document.addEventListener("DOMContentLoaded", async () => {
       const params = new URLSearchParams(window.location.search);
-      const camper = params.get("camper") || "Unknown";
-      const title = document.getElementById("calendarTitle");
+      const camper = params.get("camper");
+      const backendUrl = "https://script.google.com/macros/s/AKfycbz_sagf02qOlIKf2eGC7an1sq9bqbLgEx03G890blnLMERuITbvFXYD2W556r_iI2E/exec";
 
-      // Dynamic header title
-      if (camper === "2022") {
-        title.textContent = "Availability for 25' 2022 Apex Nano (sleeps 6)";
-      } else if (camper === "2018") {
-        title.textContent = "Availability for 32' 2018 Freedom Express (sleeps 10)";
-      } else {
-        title.textContent = "Camper Availability";
-      }
-
-      // ✅ Fetch from your Google Apps Script
-      const apiURL = `https://script.google.com/macros/s/AKfycbz_sagf02qOlIKf2eGC7an1sq9bqbLgEx03G890blnLMERuITbvFXYD2W556r_iI2E/exec?camper=${encodeURIComponent(camper)}`;
-      let events = [];
+      // Set header title
+      const camperTitle =
+        camper === "2022"
+          ? "Availability for 25' 2022 Apex Nano (sleeps 6)"
+          : "Availability for 32' 2018 Freedom Express (sleeps 10)";
+      document.getElementById("calendarTitle").textContent = camperTitle;
 
       try {
-        const response = await fetch(apiURL);
-        if (response.ok) {
-          const data = await response.json();
-          events = data.map(evt => {
-            const lowerTitle = evt.title.toLowerCase();
-			// If "unavailable" or "blocked" appears in event title then it will mark the dates as Not Available
-            const isBlocked = lowerTitle.includes("unavailable") || lowerTitle.includes("blocked");
-            return {
-              title: isBlocked ? "Not Available" : "Booked",
-              start: evt.start,
-              end: evt.end,
-			  location: evt.location,
-			  description: evt.description,
-              color: isBlocked ? "#ff9800" : "#dc3545",
-            };
+        const response = await fetch(`${backendUrl}?camper=${encodeURIComponent(camper)}`);
+        const data = await response.json();
+
+        // Add static unavailable dates (Nov–Apr)
+        const staticUnavailable = [];
+        const currentYear = new Date().getFullYear();
+        for (let y = currentYear; y <= currentYear + 2; y++) {
+          staticUnavailable.push({
+            title: "Not Available",
+            start: `${y}-11-01`,
+            end: `${y + 1}-05-01`,
+            color: "gray",
           });
-        } else {
-          console.error("Failed to fetch events from calendar");
         }
-      } catch (err) {
-        console.error("Error fetching data:", err);
-      }
 
-      // ✅ Add static off-season unavailable (Nov–Apr)
-      const notAvailableEvents = [];
-      const currentYear = new Date().getFullYear();
+        // Format events (no description used)
+        const formattedEvents = data.map(ev => {
+          const shortLoc = ev.location ? ev.location.split(",")[0] : "";
+          const title = ev.title.includes("Blocked") || !ev.location
+            ? "Not Available"
+            : `Booked${shortLoc ? " @" + shortLoc : ""}`;
 
-      const addOffSeason = (year) => {
-        notAvailableEvents.push({
-          title: "Not Available",
-          start: `${year}-11-01`,
-          end: `${year + 1}-05-01`,
-          color: "#ff9800"
+          return {
+            title,
+            start: ev.start,
+            end: ev.end,
+            color: ev.title.includes("Blocked") ? "gray" : "red",
+            allDay: true,
+            extendedProps: {
+              fullLocation: ev.location
+            },
+          };
         });
-      };
 
-      addOffSeason(currentYear - 1);
-      addOffSeason(currentYear);
-      addOffSeason(currentYear + 1);
+        const allEvents = [...formattedEvents, ...staticUnavailable];
 
-      const allEvents = [...events, ...notAvailableEvents];
+        // Initialize FullCalendar
+        const calendarEl = document.getElementById("calendar");
+        const calendar = new FullCalendar.Calendar(calendarEl, {
+          initialView: "dayGridMonth",
+          height: "auto",
+          displayEventTime: false,  // Removes "12a"
+          events: allEvents,
+          eventDidMount: info => {
+            const { fullLocation } = info.event.extendedProps;
+            if (fullLocation) {
+              new bootstrap.Tooltip(info.el, {
+                title: fullLocation,
+                html: true,
+                placement: "top",
+              });
+            }
+          },
+        });
 
-      const calendarEl = document.getElementById("calendar");
-      const calendar = new FullCalendar.Calendar(calendarEl, {
-        initialView: "dayGridMonth",
-		displayEventTime: false,
-        headerToolbar: { left: "prev,next", center: "title", right: "" },
-        height: "auto",
-        contentHeight: "auto",
-        aspectRatio: 1,
-        events: allEvents,
-        eventDidMount: (info) => {
-          if (info.event.title === "Not Available") {
-            info.el.style.opacity = 0.85;
-          }
-        },
-        windowResize: () => calendar.updateSize()
-      });
-
-      calendar.render();
+        calendar.render();
+      } catch (err) {
+        console.error("Error loading events:", err);
+      }
     });
   </script>
 </body>
