@@ -53,6 +53,42 @@ function metersToMiles(meters) {
 }
 
 /**
+ * Named range / template merge helper functions
+ */
+function getNamedRangeMergeValues_(ss) {
+  const values = {};
+
+  ss.getNamedRanges().forEach(namedRange => {
+    const name = namedRange.getName();
+    const range = namedRange.getRange();
+    values[name] = range.getDisplayValue();
+  });
+
+  return values;
+}
+
+function escapeForReplaceText_(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function replaceNamedRangePlaceholders_(doc, mergeValues) {
+  const body = doc.getBody();
+  const header = doc.getHeader();
+  const footer = doc.getFooter();
+
+  Object.keys(mergeValues).forEach(name => {
+    const placeholder = `<<${name}>>`;
+    const escapedPlaceholder = escapeForReplaceText_(placeholder);
+    const value = String(mergeValues[name] || "");
+
+    body.replaceText(escapedPlaceholder, value);
+
+    if (header) header.replaceText(escapedPlaceholder, value);
+    if (footer) footer.replaceText(escapedPlaceholder, value);
+  });
+}
+
+/**
  * Email helper functions
  */
 function getFirstName_(fullName) {
@@ -144,12 +180,11 @@ function createQuoteDraftEmail_(renterEmail, renterName, agreementFile) {
  * Main function: creates a rental quote doc, adds row to Waiting to Book, creates calendar event, creates draft email
  */
 function createQuote() {
-  const TEMPLATE_DOC_NAME = "TemplateRentalAgreement";
+  const TEMPLATE_DOC_NAME = "TemplateRentalAgreement-2026";
   const TARGET_SUBFOLDER = "2026";
   const QUOTE_SHEET = "Quote";
   const BOOKING_ID_CELL = "bookingId";
   const RENTER_NAME_CELL = "renterName";
-  const DATE_PLACEHOLDER = "{{date}}";
   const WAITING_SHEET = "Waiting to Book";
   const NEXT_BOOKING_RANGE = "nextBookingId";
   const CALENDAR_NAME = "Happy Hooker Rentals";
@@ -190,14 +225,19 @@ function createQuote() {
   const newFile = templateFile.makeCopy(newDocName, targetFolder);
 
   const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "MM/dd/yyyy");
-  const doc = DocumentApp.openById(newFile.getId());
-  const body = doc.getBody();
-  const found = body.findText(DATE_PLACEHOLDER);
 
-  if (found) body.replaceText(DATE_PLACEHOLDER, today);
+  // STEP 3: Replace <<namedRangeName>> placeholders in the new agreement doc
+  const doc = DocumentApp.openById(newFile.getId());
+
+  const mergeValues = getNamedRangeMergeValues_(ss);
+  mergeValues.today = today;
+  mergeValues.date = today;
+
+  replaceNamedRangePlaceholders_(doc, mergeValues);
 
   doc.saveAndClose();
 
+  // STEP 3B: Create draft email after the agreement has been fully merged
   try {
     createQuoteDraftEmail_(renterEmail, renterName, newFile);
   } catch (e) {
@@ -207,6 +247,7 @@ function createQuote() {
     );
   }
 
+  // STEP 4: Append to Waiting to Book
   const waitingHeaders = waitingSheet.getRange("A1:N1").getValues()[0];
   const quoteData = {};
 
@@ -228,7 +269,6 @@ function createQuote() {
   }
 
   const insertRow = finder.getRow();
-
   waitingSheet.insertRowBefore(insertRow);
 
   const newRow = insertRow;
@@ -243,6 +283,7 @@ function createQuote() {
     waitingSheet.getRange(newRow, i + 1).setValue(value);
   });
 
+  // STEP 5: Add Book checkbox
   const bookCell = waitingSheet.getRange(newRow, 1);
   const rule = SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build();
 
@@ -250,12 +291,14 @@ function createQuote() {
   bookCell.setDataValidation(rule);
   bookCell.setValue(false);
 
+  // STEP 6: Increment nextBookingId
   const nextBookingRange = ss.getRangeByName(NEXT_BOOKING_RANGE);
 
   if (nextBookingRange) {
     nextBookingRange.setValue(Number(nextBookingRange.getValue()) + 1);
   }
 
+  // STEP 7: Create Google Calendar event
   try {
     const camper = quoteData["Camper"] || "";
     const location = quoteData["Location"] || "";
@@ -282,6 +325,7 @@ function createQuote() {
     Logger.log("Calendar error: " + e);
   }
 
+  // STEP 8: Open doc
   const fileUrl = newFile.getUrl();
   const html = HtmlService.createHtmlOutput(`<script>
     window.open('${fileUrl}', '_blank');
@@ -341,6 +385,7 @@ function bookReservation(row) {
 
   waitingSheet.deleteRow(row);
 
+  // STEP 5: Update the related calendar event
   try {
     const camper = waitingData["Camper"];
     const location = waitingData["Location"];
@@ -369,6 +414,7 @@ function bookReservation(row) {
     Logger.log("Calendar update error: " + e);
   }
 
+  // STEP 6: Rename the Google Doc/Sheet for this quote
   try {
     const QUOTE_FOLDER_ID = "1-uRn7J6lDS9D6Xa7SH6QJb1TOXdg4DlJ";
 
