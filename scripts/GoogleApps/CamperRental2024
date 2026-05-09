@@ -1,0 +1,298 @@
+/**
+ * Helper functions for distance and duration calculations
+ */
+function MilesFromHome(address) {
+  var directions = Maps.newDirectionFinder()
+    .setOrigin('36 Juniper Dr, Amherst, NH')
+    .setDestination(address)
+    .setMode(Maps.DirectionFinder.Mode.DRIVING)
+    .getDirections();
+  if (directions && directions.error_message) throw directions.error_message;
+  if (directions && directions.routes && directions.routes[0] && directions.routes[0].legs && directions.routes[0].legs[0] && directions.routes[0].legs[0].distance)
+    distanceInMeters = directions.routes[0].legs[0].distance.value;
+    return metersToMiles(distanceInMeters);
+  return "unknown";
+}
+
+function HoursFromHome(address) {
+  var directions = Maps.newDirectionFinder()
+    .setOrigin('36 Juniper Dr., Amherst, NH')
+    .setDestination(address)
+    .setMode(Maps.DirectionFinder.Mode.DRIVING)
+    .getDirections();
+  if (directions && directions.error_message) throw directions.error_message;
+  if (directions && directions.routes && directions.routes[0] && directions.routes[0].legs && directions.routes[0].legs[0])
+    return directions.routes[0].legs[0].duration.text;
+  return "unknown";
+}
+
+function metersToMiles(meters) {
+  if (typeof meters !== 'number') return null;
+  return meters / 1000 * 0.621371;
+}
+
+/**
+ * Main function: creates a rental quote doc, adds row to Waiting to Book, creates calendar event
+ */
+function createQuote() {
+  // CONFIGURATION
+  const TEMPLATE_DOC_NAME = "TemplateRentalAgreement";
+  const TARGET_SUBFOLDER = "2026";
+  const QUOTE_SHEET = "Quote";
+  const BOOKING_ID_CELL = "bookingId";
+  const RENTER_NAME_CELL = "renterName";
+  const DATE_PLACEHOLDER = "{{date}}";
+  const WAITING_SHEET = "Waiting to Book";
+  const NEXT_BOOKING_RANGE = "nextBookingId";
+  const CALENDAR_NAME = "Happy Hooker Rentals";
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const quoteSheet = ss.getSheetByName(QUOTE_SHEET);
+  const waitingSheet = ss.getSheetByName(WAITING_SHEET);
+
+  // STEP 1: Read booking info
+  const bookingId = quoteSheet.getRange(BOOKING_ID_CELL).getDisplayValue().trim();
+  const renterName = quoteSheet.getRange(RENTER_NAME_CELL).getDisplayValue().trim();
+  if (!bookingId || !renterName) {
+    SpreadsheetApp.getUi().alert("Please fill Booking ID and Renter Name before creating a quote.");
+    return;
+  }
+
+  // STEP 2: Copy template doc
+  const files = DriveApp.getFilesByName(TEMPLATE_DOC_NAME);
+  if (!files.hasNext()) {
+    SpreadsheetApp.getUi().alert(`Template document '${TEMPLATE_DOC_NAME}' not found.`);
+    return;
+  }
+  const templateFile = files.next();
+  const safeBooking = bookingId.replace(/\s+/g, "");
+  const safeName = renterName.replace(/\s+/g, "");
+  const newDocName = `quote-${safeBooking}-${safeName}-RentalAgreement`;
+
+  let parentFolder = templateFile.getParents().hasNext() ? templateFile.getParents().next() : DriveApp.getRootFolder();
+  let targetFolder = parentFolder.getFoldersByName(TARGET_SUBFOLDER).hasNext() 
+                     ? parentFolder.getFoldersByName(TARGET_SUBFOLDER).next() 
+                     : parentFolder.createFolder(TARGET_SUBFOLDER);
+
+  const newFile = templateFile.makeCopy(newDocName, targetFolder);
+
+  // STEP 3: Update date in doc
+  const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "MM/dd/yyyy");
+  const doc = DocumentApp.openById(newFile.getId());
+  const body = doc.getBody();
+  const found = body.findText(DATE_PLACEHOLDER);
+  if (found) body.replaceText(DATE_PLACEHOLDER, today);
+  doc.saveAndClose();
+
+  // STEP 4: Append to Waiting to Book
+  const waitingHeaders = waitingSheet.getRange("A1:N1").getValues()[0];
+  const quoteData = {};
+  waitingHeaders.forEach(header => {
+    if (!header) return;
+    const cell = quoteSheet.createTextFinder(header).findNext();
+    if (cell) {
+      const value = quoteSheet.getRange(cell.getRow(), cell.getColumn() + 1).getDisplayValue();
+      quoteData[header] = value;
+    }
+  });
+
+  const finder = waitingSheet.createTextFinder("{{nextQuote}}").findNext();
+  if (!finder) {
+    SpreadsheetApp.getUi().alert("Cannot find {{nextQuote}} placeholder.");
+    return;
+  }
+  const insertRow = finder.getRow();
+  waitingSheet.insertRowBefore(insertRow);
+  const newRow = insertRow;
+
+  waitingHeaders.forEach((header, i) => {
+    let value = quoteData[header] || "";
+    if (header === "Outdoorsy") value = "N";
+    if (header === "Quote Date" || header === "Booking Date") value = today;
+    if (header === "Booking ID") value = bookingId;
+    waitingSheet.getRange(newRow, i + 1).setValue(value);
+  });
+
+  // STEP 5: Add Book checkbox + label
+  const bookCell = waitingSheet.getRange(newRow, 1);
+  const rule = SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build();
+  bookCell.clearContent();
+  bookCell.setDataValidation(rule);
+  bookCell.setValue(false);
+
+  // STEP 6: Increment nextBookingId
+  const nextBookingRange = ss.getRangeByName(NEXT_BOOKING_RANGE);
+  if (nextBookingRange) nextBookingRange.setValue(Number(nextBookingRange.getValue()) + 1);
+
+  // STEP 7: Create Google Calendar event
+  try {
+    const camper = quoteData["Camper"] || "";
+    const location = quoteData["Location"] || "";
+    const startDate = new Date(quoteData["Start Date"]);
+    const endDate = new Date(quoteData["End Date"]);
+    const expectedIncome = quoteData["Expected Income"] || "";
+
+    if (camper && location && startDate && endDate) {
+      let calendar = CalendarApp.getCalendarsByName(CALENDAR_NAME)[0] || CalendarApp.getCalendarById(CALENDAR_NAME);
+      if (calendar) {
+        const title = `? hold ${camper} @${location} for ${renterName}`;
+        const description = `Renter: ${renterName}\nBooking ID: ${bookingId}\nExpected Income: ${expectedIncome}`;
+        calendar.createAllDayEvent(title, startDate, new Date(endDate.getTime() + 24*60*60*1000), {location, description});
+      }
+    }
+  } catch (e) {
+    Logger.log("Calendar error: " + e);
+  }
+
+  // STEP 8: Open doc
+  const fileUrl = newFile.getUrl();
+  const html = HtmlService.createHtmlOutput(`<script>
+    window.open('${fileUrl}', '_blank');
+    google.script.host.close();
+  </script>`).setWidth(100).setHeight(50);
+  SpreadsheetApp.getUi().showModalDialog(html, `Opening new rental agreement ${newDocName}...`);
+}
+
+/**
+ * Moves a reservation from Waiting to Book → Bookings and updates calendar
+ */
+function bookReservation(row) {
+  const CALENDAR_NAME = "Happy Hooker Rentals";
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const waitingSheet = ss.getSheetByName("Waiting to Book");
+  const bookingsSheet = ss.getSheetByName("Bookings");
+  const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "MM/dd/yyyy");
+
+  if (!row) return;
+
+  // STEP 1: Find the {{nextRenter}} placeholder in Bookings
+  const nextFinder = bookingsSheet.createTextFinder("{{nextRenter}}").findNext();
+  if (!nextFinder) {
+    SpreadsheetApp.getUi().alert("Cannot find {{nextRenter}} placeholder in Bookings tab.");
+    return;
+  }
+  const insertRow = nextFinder.getRow();
+
+  // STEP 2: Insert new row above placeholder and copy formulas/format from {{nextRenter}} row
+  bookingsSheet.insertRowBefore(insertRow);
+  const newRow = insertRow;
+  const placeholderRange = bookingsSheet.getRange(insertRow + 1, 1, 1, bookingsSheet.getLastColumn());
+  placeholderRange.copyTo(bookingsSheet.getRange(newRow, 1), { contentsOnly: false });
+
+  // STEP 3: Move only matching header values from Waiting to Book → Bookings
+  const waitingHeaders = waitingSheet.getRange("A1:N1").getValues()[0];
+  const bookingsHeaders = bookingsSheet.getRange("A3:U3").getValues()[0]; // extend to all columns in Bookings
+  const rowValues = waitingSheet.getRange(row, 1, 1, waitingHeaders.length).getValues()[0];
+
+  const waitingData = {};
+  waitingHeaders.forEach((header, i) => {
+    waitingData[header] = rowValues[i];
+  });
+
+  bookingsHeaders.forEach((header, i) => {
+    if (waitingData.hasOwnProperty(header)) {
+      bookingsSheet.getRange(newRow, i + 1).setValue(waitingData[header]);
+    }
+    // update the Booking Date to today
+    if (header === "Booking Date") {
+      bookingsSheet.getRange(newRow, i + 1).setValue(today);
+    }
+  });
+
+  // STEP 4: Delete the old row from Waiting to Book
+  waitingSheet.deleteRow(row);
+
+  // --- STEP 5: Update the related calendar event ---
+  try {
+    const camper = waitingData["Camper"];
+    const location = waitingData["Location"];
+    const renterName = waitingData["Renter Name"];
+    const titleHold = `? hold ${camper} @${location} for ${renterName}`;
+    const titleBooked = `${camper} @${location} for ${renterName}`;
+
+    let calendar = CalendarApp.getCalendarsByName(CALENDAR_NAME)[0] || CalendarApp.getCalendarById(CALENDAR_NAME);
+    if (!calendar) throw new Error(`Calendar '${CALENDAR_NAME}' not found.`);
+
+    const startDate = new Date(waitingData["Start Date"]);
+    const endDate = new Date(waitingData["End Date"]);
+    
+    // get all events for each day in the range
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      const events = calendar.getEventsForDay(new Date(d));
+      for (const ev of events) {
+        if (ev.getTitle().trim() === titleHold.trim()) {
+          ev.setTitle(titleBooked);
+          Logger.log(`Updated calendar event: '${titleHold}' → '${titleBooked}'`);
+        }
+      }
+    }
+  } catch(e) {
+    Logger.log("Calendar update error: " + e);
+  }
+  // --- STEP 6: Rename the Google Doc/Sheet for this quote ---
+  try {
+    const QUOTE_FOLDER_ID = "1-uRn7J6lDS9D6Xa7SH6QJb1TOXdg4DlJ";
+
+    const bookingId = String(waitingData["Booking ID"] || "").trim();
+    const renterName = String(waitingData["Renter Name"] || "").trim();
+
+    const safeBooking = bookingId.replace(/\s+/g, "");
+    const safeName = renterName.replace(/\s+/g, "");
+
+    const oldFileName = `quote-${safeBooking}-${safeName}-RentalAgreement`;
+    const newFileName = `${safeBooking}-${safeName}-RentalAgreement`;
+
+    const folder = DriveApp.getFolderById(QUOTE_FOLDER_ID);
+    const files = folder.getFilesByName(oldFileName);
+
+    if (files.hasNext()) {
+      const file = files.next();
+      file.setName(newFileName);
+      Logger.log(`Renamed file '${oldFileName}' → '${newFileName}'`);
+    } else {
+      Logger.log(`File '${oldFileName}' not found in quote folder ID ${QUOTE_FOLDER_ID}`);
+    }
+  } catch (err) {
+    Logger.log("Error renaming quote file: " + err);
+  }
+
+  SpreadsheetApp.getUi().alert(`Reservation for ${waitingData["Renter Name"]} has been booked.`);
+}
+
+/**
+ * Installable onEdit trigger to handle Book checkbox clicks
+ */
+function onEditHandler(e) {
+  try {
+    const range = e.range;
+    const sheet = range.getSheet();
+    if (!sheet) return;
+    if (sheet.getName() !== "Waiting to Book") return;
+
+    const editedRow = range.getRow();
+    const editedCol = range.getColumn();
+    if (editedCol !== 1) return;
+
+    if (e.value !== "TRUE") return;
+
+    const ui = SpreadsheetApp.getUi();
+    const response = ui.alert("Confirm Booking", `Move booking in row ${editedRow} to Bookings?`, ui.ButtonSet.YES_NO);
+    if (response !== ui.Button.YES) {
+      sheet.getRange(editedRow,1).setValue(false);
+      return;
+    }
+    bookReservation(editedRow);
+  } catch(err) { Logger.log("onEditHandler error: "+err); }
+}
+
+/**
+ * One-time setup to create installable onEdit trigger
+ */
+function setupOnEditTrigger() {
+  const ss = SpreadsheetApp.getActive();
+  const triggers = ScriptApp.getProjectTriggers();
+  for (const t of triggers) {
+    if (t.getHandlerFunction() === "onEditHandler") return;
+  }
+  ScriptApp.newTrigger("onEditHandler").forSpreadsheet(ss).onEdit().create();
+}
