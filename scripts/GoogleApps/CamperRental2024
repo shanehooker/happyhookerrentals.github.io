@@ -456,6 +456,133 @@ function getAgreementValue_(agreementFields, possibleNames) {
   return "";
 }
 
+
+function getAgreementPlainText_(docFile) {
+  const doc = DocumentApp.openById(docFile.getId());
+  return doc.getBody().getText();
+}
+
+function getNonEmptyAgreementLines_(agreementText) {
+  return String(agreementText || "")
+    .split(/\r?\n/)
+    .map(line => String(line || "").trim())
+    .filter(line => line !== "");
+}
+
+function findLineIndexContaining_(lines, possibleLabels) {
+  const normalizedLabels = possibleLabels.map(label => String(label || "").toLowerCase());
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = String(lines[i] || "").toLowerCase();
+    if (normalizedLabels.some(label => line.indexOf(label) !== -1)) {
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+function findFirstMoneyInLines_(lines, startIndex, maxLines) {
+  const endIndex = Math.min(lines.length, startIndex + maxLines);
+  const moneyRegex = /\$\s*\d[\d,]*(?:\.\d{2})?|\b\d[\d,]*\.\d{2}\b/g;
+
+  for (let i = startIndex; i < endIndex; i++) {
+    const matches = String(lines[i] || "").match(moneyRegex);
+    if (matches && matches.length) {
+      let value = matches[0].replace(/\s+/g, "");
+      if (!value.startsWith("$")) value = "$" + value;
+      return value;
+    }
+  }
+
+  return "";
+}
+
+function extractCostDiscountFields_(agreementText) {
+  const lines = getNonEmptyAgreementLines_(agreementText);
+  const result = {
+    rentalCostNightly: "",
+    rentalCost: ""
+  };
+
+  const startIndex = findLineIndexContaining_(lines, ["costs/discounts", "costs / discounts"]);
+  if (startIndex === -1) return result;
+
+  const endIndex = Math.min(lines.length, startIndex + 20);
+  const nightlyRegex = /(\d+)\s*nights?\s*@\s*\$?\s*([\d,]+(?:\.\d{2})?)\s*\/\s*night/i;
+
+  for (let i = startIndex; i < endIndex; i++) {
+    const line = String(lines[i] || "");
+    const match = line.match(nightlyRegex);
+
+    if (match) {
+      result.rentalCostNightly = `${match[1]} nights @$${match[2].replace(/,/g, "")}/night`;
+
+      // Prefer a dollar amount after the nightly pattern on the same line; otherwise scan the next few fields/lines.
+      const afterNightlyText = line.slice(match.index + match[0].length);
+      let sameLineMoney = findFirstMoneyInLines_([afterNightlyText], 0, 1);
+      result.rentalCost = sameLineMoney || findFirstMoneyInLines_(lines, i + 1, 6);
+      return result;
+    }
+  }
+
+  return result;
+}
+
+function extractMoneyAfterLabel_(agreementText, possibleLabels, maxLines) {
+  const lines = getNonEmptyAgreementLines_(agreementText);
+  const startIndex = findLineIndexContaining_(lines, possibleLabels);
+  if (startIndex === -1) return "";
+  return findFirstMoneyInLines_(lines, startIndex, maxLines || 8);
+}
+
+function extractSectionBetweenLabels_(agreementText, startLabels, endLabels) {
+  const lines = getNonEmptyAgreementLines_(agreementText);
+  const startIndex = findLineIndexContaining_(lines, startLabels);
+  if (startIndex === -1) return "";
+
+  let endIndex = lines.length;
+  const normalizedEndLabels = endLabels.map(label => String(label || "").toLowerCase());
+
+  for (let i = startIndex + 1; i < lines.length; i++) {
+    const line = String(lines[i] || "").toLowerCase();
+    if (normalizedEndLabels.some(label => line.indexOf(label) !== -1)) {
+      endIndex = i;
+      break;
+    }
+  }
+
+  return lines.slice(startIndex + 1, endIndex).join("\n").trim();
+}
+
+function extractInvoiceFieldsFromAgreementText_(docFile) {
+  const agreementText = getAgreementPlainText_(docFile);
+  const costFields = extractCostDiscountFields_(agreementText);
+
+  return {
+    rentalCostNightly: costFields.rentalCostNightly,
+    rentalCost: costFields.rentalCost,
+    NHMRTax: extractMoneyAfterLabel_(agreementText, [
+      "nh meals/room tax",
+      "nh meals / room tax",
+      "nh meals and rooms tax",
+      "nh meals & rooms tax"
+    ], 8),
+    deliveryCost: extractMoneyAfterLabel_(agreementText, [
+      "delivery/setup charge",
+      "delivery / setup charge",
+      "delivery setup charge",
+      "delivery charge",
+      "setup charge"
+    ], 8),
+    paymentTerms: extractSectionBetweenLabels_(agreementText, [
+      "payment terms"
+    ], [
+      "cancellation terms"
+    ])
+  };
+}
+
 function getPaymentsForBooking_(ss, bookingId) {
   const incomeSheet = ss.getSheetByName(INCOME_SHEET_NAME);
 
@@ -668,14 +795,27 @@ function generateInvoice(row) {
     const invoice = createInvoiceFromTemplate_(bookingId, renterName);
     addStatus_(statusLog, "Invoice file", true, `Created ${invoice.name}${invoice.replacedCount ? ` after replacing ${invoice.replacedCount} existing invoice file(s)` : ""}.`);
 
-    const rentalCostNightlyRaw = getAgreementValue_(agreementFields, [
-      "rentalCostNightly",
-      "Rental Cost Nightly",
-      "Rental Cost/Nightly",
-      "Nightly Rental Cost",
-      "Rental Rate",
-      "Rate"
-    ]);
+    const textExtractedInvoiceFields = extractInvoiceFieldsFromAgreementText_(agreementFile);
+
+    const rentalCostNightlyRaw =
+      textExtractedInvoiceFields.rentalCostNightly ||
+      getAgreementValue_(agreementFields, [
+        "rentalCostNightly",
+        "Rental Cost Nightly",
+        "Rental Cost/Nightly",
+        "Nightly Rental Cost",
+        "Rental Rate",
+        "Rate"
+      ]);
+
+    const rentalCostRaw =
+      textExtractedInvoiceFields.rentalCost ||
+      getAgreementValue_(agreementFields, [
+        "rentalCost",
+        "Rental Cost",
+        "Rental Amount",
+        "Base Rental Cost"
+      ]);
 
     const totalCostRaw =
       getAgreementValue_(agreementFields, [
@@ -709,21 +849,24 @@ function generateInvoice(row) {
       balance: formatMoney_(balance),
 
       rentalRate: rentalCostNightlyRaw,         // backwards-compatible old placeholder
-      rentalCost: rentalCostNightlyRaw,         // invoice placeholder used in current template
-      rentalCostNightly: rentalCostNightlyRaw,  // preferred invoice placeholder
+      rentalCost: rentalCostRaw,                // dollar value, e.g. $304.00
+      rentalCostNightly: rentalCostNightlyRaw,  // nightly description, e.g. 4 nights @$76/night
 
-      NHMRTax: getAgreementValue_(agreementFields, [
+      NHMRTax: textExtractedInvoiceFields.NHMRTax || getAgreementValue_(agreementFields, [
         "NHMRTax",
         "NH MR Tax",
+        "NH Meals/Room Tax",
         "NH Meals and Rooms Tax",
         "Meals and Rooms Tax",
         "M&R Tax",
         "Tax"
       ]),
 
-      deliveryCost: getAgreementValue_(agreementFields, [
+      deliveryCost: textExtractedInvoiceFields.deliveryCost || getAgreementValue_(agreementFields, [
         "deliveryCost",
         "Delivery Cost",
+        "Delivery/Setup Charge",
+        "Delivery Setup Charge",
         "Delivery Fee",
         "Delivery"
       ]),
@@ -739,7 +882,7 @@ function generateInvoice(row) {
         "Addons"
       ]),
 
-      paymentTerms: getAgreementValue_(agreementFields, [
+      paymentTerms: textExtractedInvoiceFields.paymentTerms || getAgreementValue_(agreementFields, [
         "paymentTerms",
         "Payment Terms",
         "Payment Term",
