@@ -31,6 +31,21 @@ function metersToMiles(meters) {
   return meters / 1000 * 0.621371;
 }
 
+
+/**
+ * Status log helpers used by quote, booking, and invoice workflows.
+ */
+function addStatus_(statusLog, step, success, detail) {
+  const message = `${success ? "✅" : "⚠️"} ${step}: ${detail}`;
+  statusLog.push(message);
+  Logger.log(`${success ? "SUCCESS" : "WARNING"} - ${step}: ${detail}`);
+}
+
+function showStatusLog_(title, statusLog) {
+  const message = statusLog && statusLog.length ? statusLog.join("\n") : "No status messages were recorded.";
+  SpreadsheetApp.getUi().alert(title, message, SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
 /**
  * Main function: creates a rental quote doc, adds row to Waiting to Book, creates calendar event
  */
@@ -411,19 +426,10 @@ function getPaymentsForBooking_(ss, bookingId) {
     throw new Error(`Income sheet '${INCOME_SHEET_NAME}' not found.`);
   }
 
-  const headers = incomeSheet.getRange(1, 1, 1, incomeSheet.getLastColumn()).getDisplayValues()[0];
-
-  const bookingIdCol = headers.findIndex(h => String(h).trim() === "Booking ID") + 1;
-  const descriptionCol = headers.findIndex(h => String(h).trim() === "Description") + 1;
-  const dateCol = headers.findIndex(h => String(h).trim() === "Date") + 1;
-  const amountCol = headers.findIndex(h => String(h).trim() === "Amount") + 1;
-
-  if (!bookingIdCol || !descriptionCol || !dateCol || !amountCol) {
-    throw new Error("Income sheet must have headers: Booking ID, Description, Date, Amount.");
-  }
-
   const lastRow = incomeSheet.getLastRow();
-  if (lastRow < 2) {
+  const lastCol = incomeSheet.getLastColumn();
+
+  if (lastRow < 1 || lastCol < 1) {
     return {
       descriptions: "",
       dates: "",
@@ -433,7 +439,75 @@ function getPaymentsForBooking_(ss, bookingId) {
     };
   }
 
-  const rows = incomeSheet.getRange(2, 1, lastRow - 1, incomeSheet.getLastColumn()).getDisplayValues();
+  function normalizeHeader_(value) {
+    return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+
+  function findHeaderColInRow_(headers, possibleHeaders) {
+    const normalizedPossible = possibleHeaders.map(normalizeHeader_);
+
+    for (let i = 0; i < headers.length; i++) {
+      const normalizedHeader = normalizeHeader_(headers[i]);
+      if (normalizedPossible.includes(normalizedHeader)) {
+        return i + 1;
+      }
+    }
+
+    return 0;
+  }
+
+  // The Income sheet may have summary/totals rows above the actual transaction table.
+  // Scan the first 30 rows and find the row that contains all required headers.
+  const scanRows = Math.min(lastRow, 30);
+  const scannedValues = incomeSheet.getRange(1, 1, scanRows, lastCol).getDisplayValues();
+
+  let headerRow = 0;
+  let bookingIdCol = 0;
+  let descriptionCol = 0;
+  let dateCol = 0;
+  let amountCol = 0;
+
+  for (let r = 0; r < scannedValues.length; r++) {
+    const rowHeaders = scannedValues[r];
+
+    const testBookingIdCol = findHeaderColInRow_(rowHeaders, ["Booking ID", "Booking Id", "BookingId", "bookingId"]);
+    const testDescriptionCol = findHeaderColInRow_(rowHeaders, ["Description", "Payment Description", "PaymentDescription"]);
+    const testDateCol = findHeaderColInRow_(rowHeaders, ["Date", "Payment Date", "PaymentDate"]);
+    const testAmountCol = findHeaderColInRow_(rowHeaders, ["Amount", "Payment", "Payment Amount", "PaymentAmount"]);
+
+    if (testBookingIdCol && testDescriptionCol && testDateCol && testAmountCol) {
+      headerRow = r + 1;
+      bookingIdCol = testBookingIdCol;
+      descriptionCol = testDescriptionCol;
+      dateCol = testDateCol;
+      amountCol = testAmountCol;
+      break;
+    }
+  }
+
+  if (!headerRow) {
+    const scannedPreview = scannedValues
+      .map((row, index) => `Row ${index + 1}: ${row.join(", ")}`)
+      .join(" | ");
+
+    throw new Error(
+      "Income sheet must have one row containing headers for Booking Id, Description, Date, and Amount. " +
+      "The script scanned the first 30 rows but did not find them together. Scanned rows: " + scannedPreview
+    );
+  }
+
+  if (lastRow <= headerRow) {
+    return {
+      descriptions: "",
+      dates: "",
+      amounts: "",
+      totalPaid: 0,
+      count: 0,
+      headerRow
+    };
+  }
+
+  const rows = incomeSheet.getRange(headerRow + 1, 1, lastRow - headerRow, lastCol).getDisplayValues();
 
   const matched = [];
   let totalPaid = 0;
@@ -463,7 +537,8 @@ function getPaymentsForBooking_(ss, bookingId) {
     dates: matched.map(p => p.date).join("\n"),
     amounts: matched.map(p => p.amountDisplay).join("\n"),
     totalPaid,
-    count: matched.length
+    count: matched.length,
+    headerRow
   };
 }
 
@@ -662,6 +737,11 @@ function onEditHandler(e) {
     }
   } catch(err) {
     Logger.log("onEditHandler error: " + err);
+    try {
+      SpreadsheetApp.getUi().alert("onEditHandler error", String(err), SpreadsheetApp.getUi().ButtonSet.OK);
+    } catch (uiErr) {
+      Logger.log("Could not display onEditHandler error UI: " + uiErr);
+    }
   }
 }
 
