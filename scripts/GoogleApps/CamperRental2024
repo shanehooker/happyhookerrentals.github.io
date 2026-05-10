@@ -46,133 +46,376 @@ function showStatusLog_(title, statusLog) {
   SpreadsheetApp.getUi().alert(title, message, SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
+
+/**
+ * Shared configuration.
+ *
+ * IMPORTANT: For the calendar, prefer Calendar ID over display name.
+ * To fully resolve shared-calendar lookup issues, paste the Calendar ID for
+ * the real "Happy Hooker Rentals" calendar below. If left blank, the script
+ * falls back to the display name for backward compatibility.
+ */
+const HHR_CALENDAR_ID = "647d50cd910f97384c20ba658a3a4fc3f9a6c4970a4254b227cba66b285a8fca@group.calendar.google.com";
+const HHR_CALENDAR_NAME = "Happy Hooker Rentals";
+
+function getHhrCalendar_() {
+  if (HHR_CALENDAR_ID && HHR_CALENDAR_ID.trim() !== "") {
+    return CalendarApp.getCalendarById(HHR_CALENDAR_ID.trim());
+  }
+
+  const calendars = CalendarApp.getCalendarsByName(HHR_CALENDAR_NAME);
+  if (calendars && calendars.length > 0) return calendars[0];
+
+  // Legacy fallback. Some calendars can be looked up by ID-like string here.
+  return CalendarApp.getCalendarById(HHR_CALENDAR_NAME);
+}
+
+function getHhrCalendarLookupDescription_() {
+  if (HHR_CALENDAR_ID && HHR_CALENDAR_ID.trim() !== "") {
+    return `calendar ID '${HHR_CALENDAR_ID}'`;
+  }
+  return `calendar name '${HHR_CALENDAR_NAME}'`;
+}
+
+/**
+ * Named range / document template merge helpers for TemplateRentalAgreement-2026.
+ */
+function getNamedRangeMergeValues_(ss) {
+  const values = {};
+
+  ss.getNamedRanges().forEach(namedRange => {
+    const name = namedRange.getName();
+    const range = namedRange.getRange();
+    values[name] = range.getDisplayValue();
+  });
+
+  return values;
+}
+
+function escapeForReplaceText_(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function replaceNamedRangePlaceholders_(doc, mergeValues) {
+  const body = doc.getBody();
+  const header = doc.getHeader();
+  const footer = doc.getFooter();
+
+  Object.keys(mergeValues).forEach(name => {
+    const placeholder = `<<${name}>>`;
+    const escapedPlaceholder = escapeForReplaceText_(placeholder);
+    const value = String(mergeValues[name] || "");
+
+    body.replaceText(escapedPlaceholder, value);
+    if (header) header.replaceText(escapedPlaceholder, value);
+    if (footer) footer.replaceText(escapedPlaceholder, value);
+  });
+}
+
+function getMergeValue_(mergeValues, possibleNames) {
+  for (const name of possibleNames) {
+    if (mergeValues[name] !== undefined && String(mergeValues[name]).trim() !== "") {
+      return String(mergeValues[name]).trim();
+    }
+  }
+  return "";
+}
+
+function parseSheetDate_(value) {
+  if (Object.prototype.toString.call(value) === "[object Date]" && !isNaN(value)) {
+    return value;
+  }
+
+  const parsed = new Date(value);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/**
+ * Draft email helpers.
+ */
+function getFirstName_(fullName) {
+  return String(fullName || "").trim().split(/\s+/)[0] || "";
+}
+
+function getValueNextToLabel_(sheet, label) {
+  const cell = sheet.createTextFinder(label).matchEntireCell(true).findNext();
+  if (!cell) return "";
+  return sheet.getRange(cell.getRow(), cell.getColumn() + 1).getDisplayValue().trim();
+}
+
+function getNamedRangeDisplayValue_(ss, rangeName) {
+  const range = ss.getRangeByName(rangeName);
+  if (!range) return "";
+  return range.getDisplayValue().trim();
+}
+
+function getGoogleDocAsHtml_(docId) {
+  const exportUrl = `https://docs.google.com/document/d/${docId}/export?format=html`;
+
+  const response = UrlFetchApp.fetch(exportUrl, {
+    headers: {
+      Authorization: `Bearer ${ScriptApp.getOAuthToken()}`
+    },
+    muteHttpExceptions: true
+  });
+
+  const responseCode = response.getResponseCode();
+  if (responseCode !== 200) {
+    throw new Error(`Failed to export email template as HTML. Response code: ${responseCode}`);
+  }
+
+  return response.getContentText();
+}
+
+function stripHtmlForPlainText_(html) {
+  return String(html || "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .trim();
+}
+
+function createQuoteDraftEmail_(renterEmail, renterName, agreementFile) {
+  const EMAIL_TEMPLATE_DOC_NAME = "TemplateQuoteEmail";
+
+  if (!renterEmail) {
+    throw new Error("No renter email found.");
+  }
+
+  const templateFiles = DriveApp.getFilesByName(EMAIL_TEMPLATE_DOC_NAME);
+  if (!templateFiles.hasNext()) {
+    throw new Error(`Email template '${EMAIL_TEMPLATE_DOC_NAME}' not found.`);
+  }
+
+  const templateFile = templateFiles.next();
+  const firstName = getFirstName_(renterName);
+
+  let htmlBody = getGoogleDocAsHtml_(templateFile.getId());
+  htmlBody = htmlBody.replace(/&lt;&lt;renter_name&gt;&gt;/g, firstName);
+  htmlBody = htmlBody.replace(/<<renter_name>>/g, firstName);
+
+  const plainBody = stripHtmlForPlainText_(htmlBody);
+  const subject = "Your Happy Hooker Rentals quote";
+  const attachment = agreementFile.getAs(MimeType.PDF);
+
+  GmailApp.createDraft(
+    renterEmail,
+    subject,
+    plainBody,
+    {
+      htmlBody: htmlBody,
+      attachments: [attachment],
+      name: "Happy Hooker Rentals"
+    }
+  );
+
+  return `Created formatted draft for ${renterEmail} using account ${Session.getActiveUser().getEmail()}`;
+}
+
 /**
  * Main function: creates a rental quote doc, adds row to Waiting to Book, creates calendar event
  */
 function createQuote() {
+  const statusLog = [];
+
   // CONFIGURATION
-  const TEMPLATE_DOC_NAME = "TemplateRentalAgreement";
+  const TEMPLATE_DOC_NAME = "TemplateRentalAgreement-2026";
   const TARGET_SUBFOLDER = "2026";
   const QUOTE_SHEET = "Quote";
   const BOOKING_ID_CELL = "bookingId";
   const RENTER_NAME_CELL = "renterName";
-  const DATE_PLACEHOLDER = "{{date}}";
   const WAITING_SHEET = "Waiting to Book";
   const NEXT_BOOKING_RANGE = "nextBookingId";
-  const CALENDAR_NAME = "Happy Hooker Rentals";
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const quoteSheet = ss.getSheetByName(QUOTE_SHEET);
   const waitingSheet = ss.getSheetByName(WAITING_SHEET);
 
-  // STEP 1: Read booking info
-  const bookingId = quoteSheet.getRange(BOOKING_ID_CELL).getDisplayValue().trim();
-  const renterName = quoteSheet.getRange(RENTER_NAME_CELL).getDisplayValue().trim();
-  if (!bookingId || !renterName) {
-    SpreadsheetApp.getUi().alert("Please fill Booking ID and Renter Name before creating a quote.");
-    return;
-  }
+  let newFile = null;
+  let newDocName = "";
 
-  // STEP 2: Copy template doc
-  const files = DriveApp.getFilesByName(TEMPLATE_DOC_NAME);
-  if (!files.hasNext()) {
-    SpreadsheetApp.getUi().alert(`Template document '${TEMPLATE_DOC_NAME}' not found.`);
-    return;
-  }
-  const templateFile = files.next();
-  const safeBooking = bookingId.replace(/\s+/g, "");
-  const safeName = renterName.replace(/\s+/g, "");
-  const newDocName = `quote-${safeBooking}-${safeName}-RentalAgreement`;
-
-  let parentFolder = templateFile.getParents().hasNext() ? templateFile.getParents().next() : DriveApp.getRootFolder();
-  let targetFolder = parentFolder.getFoldersByName(TARGET_SUBFOLDER).hasNext() 
-                     ? parentFolder.getFoldersByName(TARGET_SUBFOLDER).next() 
-                     : parentFolder.createFolder(TARGET_SUBFOLDER);
-
-  const newFile = templateFile.makeCopy(newDocName, targetFolder);
-
-  // STEP 3: Update date in doc
-  const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "MM/dd/yyyy");
-  const doc = DocumentApp.openById(newFile.getId());
-  const body = doc.getBody();
-  const found = body.findText(DATE_PLACEHOLDER);
-  if (found) body.replaceText(DATE_PLACEHOLDER, today);
-  doc.saveAndClose();
-
-  // STEP 4: Append to Waiting to Book
-  const waitingHeaders = waitingSheet.getRange("A1:N1").getValues()[0];
-  const quoteData = {};
-  waitingHeaders.forEach(header => {
-    if (!header) return;
-    const cell = quoteSheet.createTextFinder(header).findNext();
-    if (cell) {
-      const value = quoteSheet.getRange(cell.getRow(), cell.getColumn() + 1).getDisplayValue();
-      quoteData[header] = value;
-    }
-  });
-
-  const finder = waitingSheet.createTextFinder("{{nextQuote}}").findNext();
-  if (!finder) {
-    SpreadsheetApp.getUi().alert("Cannot find {{nextQuote}} placeholder.");
-    return;
-  }
-  const insertRow = finder.getRow();
-  waitingSheet.insertRowBefore(insertRow);
-  const newRow = insertRow;
-
-  waitingHeaders.forEach((header, i) => {
-    let value = quoteData[header] || "";
-    if (header === "Outdoorsy") value = "N";
-    if (header === "Quote Date" || header === "Booking Date") value = today;
-    if (header === "Booking ID") value = bookingId;
-    waitingSheet.getRange(newRow, i + 1).setValue(value);
-  });
-
-  // STEP 5: Add Book checkbox + label
-  const bookCell = waitingSheet.getRange(newRow, 1);
-  const rule = SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build();
-  bookCell.clearContent();
-  bookCell.setDataValidation(rule);
-  bookCell.setValue(false);
-
-  // STEP 6: Increment nextBookingId
-  const nextBookingRange = ss.getRangeByName(NEXT_BOOKING_RANGE);
-  if (nextBookingRange) nextBookingRange.setValue(Number(nextBookingRange.getValue()) + 1);
-
-  // STEP 7: Create Google Calendar event
   try {
-    const camper = quoteData["Camper"] || "";
-    const location = quoteData["Location"] || "";
-    const startDate = new Date(quoteData["Start Date"]);
-    const endDate = new Date(quoteData["End Date"]);
-    const expectedIncome = quoteData["Expected Income"] || "";
+    // STEP 1: Read booking info
+    const bookingId = quoteSheet.getRange(BOOKING_ID_CELL).getDisplayValue().trim();
+    const renterName = quoteSheet.getRange(RENTER_NAME_CELL).getDisplayValue().trim();
+    const renterEmail = getNamedRangeDisplayValue_(ss, "renterEmail") || getValueNextToLabel_(quoteSheet, "Renter Email");
 
-    if (camper && location && startDate && endDate) {
-      let calendar = CalendarApp.getCalendarsByName(CALENDAR_NAME)[0] || CalendarApp.getCalendarById(CALENDAR_NAME);
-      if (calendar) {
-        const title = `? hold ${camper} @${location} for ${renterName}`;
-        const description = `Renter: ${renterName}\nBooking ID: ${bookingId}\nExpected Income: ${expectedIncome}`;
-        calendar.createAllDayEvent(title, startDate, new Date(endDate.getTime() + 24*60*60*1000), {location, description});
+    if (!bookingId || !renterName) {
+      addStatus_(statusLog, "Quote setup", false, "Missing Booking ID or Renter Name.");
+      showStatusLog_("Create Quote Status", statusLog);
+      return;
+    }
+
+    addStatus_(statusLog, "Quote setup", true, `Booking ${bookingId} for ${renterName}.`);
+
+    // STEP 2: Copy TemplateRentalAgreement-2026 doc
+    const files = DriveApp.getFilesByName(TEMPLATE_DOC_NAME);
+    if (!files.hasNext()) {
+      addStatus_(statusLog, "Template lookup", false, `Template document '${TEMPLATE_DOC_NAME}' not found.`);
+      showStatusLog_("Create Quote Status", statusLog);
+      return;
+    }
+
+    const templateFile = files.next();
+    addStatus_(statusLog, "Template lookup", true, `Found ${TEMPLATE_DOC_NAME}.`);
+
+    const safeBooking = bookingId.replace(/\s+/g, "");
+    const safeName = renterName.replace(/\s+/g, "");
+    newDocName = `quote-${safeBooking}-${safeName}-RentalAgreement`;
+
+    let parentFolder = templateFile.getParents().hasNext()
+      ? templateFile.getParents().next()
+      : DriveApp.getRootFolder();
+
+    let targetFolder = parentFolder.getFoldersByName(TARGET_SUBFOLDER).hasNext()
+      ? parentFolder.getFoldersByName(TARGET_SUBFOLDER).next()
+      : parentFolder.createFolder(TARGET_SUBFOLDER);
+
+    newFile = templateFile.makeCopy(newDocName, targetFolder);
+    addStatus_(statusLog, "Agreement document", true, `Created ${newDocName}.`);
+
+    // STEP 3: Replace <<namedRangeName>> placeholders from HHRentals-2026IncomeExpenses named ranges
+    const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "MM/dd/yyyy");
+    const doc = DocumentApp.openById(newFile.getId());
+
+    const mergeValues = getNamedRangeMergeValues_(ss);
+    mergeValues.today = today;
+    mergeValues.date = today;
+
+    replaceNamedRangePlaceholders_(doc, mergeValues);
+    doc.saveAndClose();
+
+    addStatus_(statusLog, "Template merge", true, "Replaced named-range placeholders in the agreement doc.");
+
+    // STEP 3B: Create draft email after the agreement has been fully merged
+    try {
+      const draftStatus = createQuoteDraftEmail_(renterEmail, renterName, newFile);
+      addStatus_(statusLog, "Draft email", true, draftStatus);
+    } catch (e) {
+      addStatus_(statusLog, "Draft email", false, e.toString());
+    }
+
+    // STEP 4: Append to Waiting to Book
+    const waitingHeaders = waitingSheet.getRange("A1:N1").getValues()[0];
+    const quoteData = {};
+
+    waitingHeaders.forEach(header => {
+      if (!header) return;
+      const cell = quoteSheet.createTextFinder(header).findNext();
+      if (cell) {
+        const value = quoteSheet.getRange(cell.getRow(), cell.getColumn() + 1).getDisplayValue();
+        quoteData[header] = value;
       }
+    });
+
+    const finder = waitingSheet.createTextFinder("{{nextQuote}}").findNext();
+    if (!finder) {
+      addStatus_(statusLog, "Waiting to Book", false, "Cannot find {{nextQuote}} placeholder.");
+      showStatusLog_("Create Quote Status", statusLog);
+      return;
+    }
+
+    const insertRow = finder.getRow();
+    waitingSheet.insertRowBefore(insertRow);
+    const newRow = insertRow;
+
+    waitingHeaders.forEach((header, i) => {
+      let value = quoteData[header] || "";
+      if (header === "Outdoorsy") value = "N";
+      if (header === "Quote Date" || header === "Booking Date") value = today;
+      if (header === "Booking ID") value = bookingId;
+      waitingSheet.getRange(newRow, i + 1).setValue(value);
+    });
+
+    addStatus_(statusLog, "Waiting to Book", true, `Inserted quote row ${newRow}.`);
+
+    // STEP 5: Add Book checkbox
+    const bookCell = waitingSheet.getRange(newRow, 1);
+    const rule = SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build();
+    bookCell.clearContent();
+    bookCell.setDataValidation(rule);
+    bookCell.setValue(false);
+
+    addStatus_(statusLog, "Book checkbox", true, `Added checkbox to row ${newRow}.`);
+
+    // STEP 6: Increment nextBookingId
+    const nextBookingRange = ss.getRangeByName(NEXT_BOOKING_RANGE);
+    if (nextBookingRange) {
+      nextBookingRange.setValue(Number(nextBookingRange.getValue()) + 1);
+      addStatus_(statusLog, "Booking ID", true, "Incremented nextBookingId.");
+    } else {
+      addStatus_(statusLog, "Booking ID", false, `Named range '${NEXT_BOOKING_RANGE}' not found.`);
+    }
+
+    // STEP 7: Create Google Calendar hold using Calendar ID when configured
+    try {
+      const camper = getMergeValue_(mergeValues, ["camper", "Camper"]) || quoteData["Camper"] || "";
+      const location = getMergeValue_(mergeValues, ["location", "Location"]) || quoteData["Location"] || "";
+      const startDateRaw = getMergeValue_(mergeValues, ["startDate", "Start Date", "rentalStartDate"]) || quoteData["Start Date"] || "";
+      const endDateRaw = getMergeValue_(mergeValues, ["endDate", "End Date", "rentalEndDate"]) || quoteData["End Date"] || "";
+      const expectedIncome = getMergeValue_(mergeValues, ["expectedIncome", "Expected Income"]) || quoteData["Expected Income"] || "";
+
+      const startDate = parseSheetDate_(startDateRaw);
+      const endDate = parseSheetDate_(endDateRaw);
+
+      if (!camper || !location || !startDate || !endDate) {
+        addStatus_(
+          statusLog,
+          "Calendar hold",
+          false,
+          `Skipped. Camper='${camper}', Location='${location}', Start='${startDateRaw}', End='${endDateRaw}'.`
+        );
+      } else {
+        const calendar = getHhrCalendar_();
+
+        if (!calendar) {
+          addStatus_(statusLog, "Calendar hold", false, `Could not find ${getHhrCalendarLookupDescription_()}.`);
+        } else {
+          const title = `? hold ${camper} @${location} for ${renterName}`;
+          const description = `Renter: ${renterName}\nBooking ID: ${bookingId}\nExpected Income: ${expectedIncome}`;
+
+          calendar.createAllDayEvent(
+            title,
+            startDate,
+            new Date(endDate.getTime() + 24 * 60 * 60 * 1000),
+            { location, description }
+          );
+
+          addStatus_(statusLog, "Calendar hold", true, `Created '${title}'.`);
+        }
+      }
+    } catch (e) {
+      addStatus_(statusLog, "Calendar hold", false, e.toString());
+    }
+
+    showStatusLog_("Create Quote Status", statusLog);
+
+    // STEP 8: Open doc
+    if (newFile) {
+      const fileUrl = newFile.getUrl();
+      const html = HtmlService.createHtmlOutput(`<script>
+        window.open('${fileUrl}', '_blank');
+        google.script.host.close();
+      </script>`).setWidth(100).setHeight(50);
+      SpreadsheetApp.getUi().showModalDialog(html, `Opening new rental agreement ${newDocName}...`);
     }
   } catch (e) {
-    Logger.log("Calendar error: " + e);
+    addStatus_(statusLog, "Unexpected error", false, e.toString());
+    showStatusLog_("Create Quote Status", statusLog);
+    Logger.log("createQuote error: " + e);
   }
-
-  // STEP 8: Open doc
-  const fileUrl = newFile.getUrl();
-  const html = HtmlService.createHtmlOutput(`<script>
-    window.open('${fileUrl}', '_blank');
-    google.script.host.close();
-  </script>`).setWidth(100).setHeight(50);
-  SpreadsheetApp.getUi().showModalDialog(html, `Opening new rental agreement ${newDocName}...`);
 }
 
 /**
  * Moves a reservation from Waiting to Book → Bookings and updates calendar
  */
 function bookReservation(row) {
-  const CALENDAR_NAME = "Happy Hooker Rentals";
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const waitingSheet = ss.getSheetByName("Waiting to Book");
   const bookingsSheet = ss.getSheetByName("Bookings");
@@ -225,8 +468,8 @@ function bookReservation(row) {
     const titleHold = `? hold ${camper} @${location} for ${renterName}`;
     const titleBooked = `${camper} @${location} for ${renterName}`;
 
-    let calendar = CalendarApp.getCalendarsByName(CALENDAR_NAME)[0] || CalendarApp.getCalendarById(CALENDAR_NAME);
-    if (!calendar) throw new Error(`Calendar '${CALENDAR_NAME}' not found.`);
+    const calendar = getHhrCalendar_();
+    if (!calendar) throw new Error(`Could not find ${getHhrCalendarLookupDescription_()}.`);
 
     const startDate = new Date(waitingData["Start Date"]);
     const endDate = new Date(waitingData["End Date"]);
