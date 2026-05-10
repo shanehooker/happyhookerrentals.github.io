@@ -351,11 +351,20 @@ function createInvoiceFromTemplate_(bookingId, renterName) {
   const safeName = safeNoSpaces_(renterName);
   const invoiceName = `${safeBooking}-${safeName}-Invoice`;
 
+  // Replace existing invoice by moving any existing invoice with this exact name to trash.
+  const existingFiles = folder.getFilesByName(invoiceName);
+  let replacedCount = 0;
+  while (existingFiles.hasNext()) {
+    existingFiles.next().setTrashed(true);
+    replacedCount++;
+  }
+
   const newFile = templateFile.makeCopy(invoiceName, folder);
 
   return {
     file: newFile,
-    name: invoiceName
+    name: invoiceName,
+    replacedCount: replacedCount
   };
 }
 
@@ -372,36 +381,64 @@ function extractFieldsFromAgreementDoc_(docFile) {
   const body = doc.getBody();
   const fields = {};
 
+  function saveField(label, value) {
+    label = String(label || "").trim();
+    value = String(value || "").trim();
+
+    if (!label || !value) return;
+
+    // Remove leftover placeholder wrappers if a template label was written as <<paymentTerms>>.
+    label = label.replace(/^<<\s*/, "").replace(/\s*>>$/, "");
+
+    fields[normalizeAgreementKey_(label)] = value;
+  }
+
   const tables = body.getTables();
 
   tables.forEach(table => {
     for (let r = 0; r < table.getNumRows(); r++) {
       const row = table.getRow(r);
+      const cellTexts = [];
 
-      if (row.getNumCells() >= 2) {
-        const label = row.getCell(0).getText().trim();
-        const value = row.getCell(1).getText().trim();
+      for (let c = 0; c < row.getNumCells(); c++) {
+        cellTexts.push(row.getCell(c).getText().trim());
+      }
 
-        if (label && value) {
-          fields[normalizeAgreementKey_(label)] = value;
-        }
+      // Common case: label in first cell, value in the next non-empty cell to the right.
+      if (cellTexts.length >= 2 && cellTexts[0]) {
+        const firstValueToRight = cellTexts.slice(1).find(text => text !== "");
+        if (firstValueToRight) saveField(cellTexts[0], firstValueToRight);
+      }
+
+      // More flexible case: any cell can be a label, and the next non-empty cell is the value.
+      for (let c = 0; c < cellTexts.length - 1; c++) {
+        const label = cellTexts[c];
+        if (!label) continue;
+
+        const value = cellTexts.slice(c + 1).find(text => text !== "");
+        if (value) saveField(label, value);
       }
     }
   });
 
   const text = body.getText();
-  const lines = text.split(/\r?\n/);
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line !== "");
 
-  lines.forEach(line => {
-    const match = line.match(/^(.+?)\s*:\s*(.+)$/);
+  lines.forEach((line, index) => {
+    // Supports "Payment Terms: Due before delivery"
+    const inlineMatch = line.match(/^(.+?)\s*:\s*(.+)$/);
 
-    if (match) {
-      const label = match[1].trim();
-      const value = match[2].trim();
+    if (inlineMatch) {
+      saveField(inlineMatch[1], inlineMatch[2]);
+      return;
+    }
 
-      if (label && value) {
-        fields[normalizeAgreementKey_(label)] = value;
-      }
+    // Supports two-line patterns:
+    // Payment Terms:
+    // Due before delivery
+    const labelOnlyMatch = line.match(/^(.+?)\s*:\s*$/);
+    if (labelOnlyMatch && lines[index + 1]) {
+      saveField(labelOnlyMatch[1], lines[index + 1]);
     }
   });
 
@@ -545,13 +582,18 @@ function getPaymentsForBooking_(ss, bookingId) {
 function replaceInvoicePlaceholders_(spreadsheetFile, mergeValues) {
   const invoiceSs = SpreadsheetApp.openById(spreadsheetFile.getId());
 
-  invoiceSs.getSheets().forEach(sheet => {
-    Object.keys(mergeValues).forEach(key => {
-      const placeholder = `<<${key}>>`;
-      const value = String(mergeValues[key] ?? "");
+  // TemplateInvoice-2026 now contains a single sheet named "Invoice".
+  // Use that sheet directly so old/deleted template sheets can never affect the merge.
+  const invoiceSheet = invoiceSs.getSheetByName("Invoice");
 
-      sheet.createTextFinder(placeholder).replaceAllWith(value);
-    });
+  if (!invoiceSheet) {
+    throw new Error("Invoice template must contain a sheet named 'Invoice'.");
+  }
+
+  Object.keys(mergeValues).forEach(key => {
+    const placeholder = `<<${key}>>`;
+    const value = String(mergeValues[key] ?? "");
+    invoiceSheet.createTextFinder(placeholder).replaceAllWith(value);
   });
 
   SpreadsheetApp.flush();
@@ -624,10 +666,25 @@ function generateInvoice(row) {
     addStatus_(statusLog, "Payments", true, `Found ${paymentData.count} payment row(s). Total paid: ${formatMoney_(paymentData.totalPaid)}.`);
 
     const invoice = createInvoiceFromTemplate_(bookingId, renterName);
-    addStatus_(statusLog, "Invoice file", true, `Created ${invoice.name}.`);
+    addStatus_(statusLog, "Invoice file", true, `Created ${invoice.name}${invoice.replacedCount ? ` after replacing ${invoice.replacedCount} existing invoice file(s)` : ""}.`);
+
+    const rentalCostNightlyRaw = getAgreementValue_(agreementFields, [
+      "rentalCostNightly",
+      "Rental Cost Nightly",
+      "Rental Cost/Nightly",
+      "Nightly Rental Cost",
+      "Rental Rate",
+      "Rate"
+    ]);
 
     const totalCostRaw =
-      getAgreementValue_(agreementFields, ["totalCost", "Total Cost", "Total Rental Cost", "Expected Income"]) ||
+      getAgreementValue_(agreementFields, [
+        "totalRentalCost",
+        "Total Rental Cost",
+        "totalCost",
+        "Total Cost",
+        "Expected Income"
+      ]) ||
       bookingData["Expected Income"] ||
       bookingData["Total Cost"] ||
       "0";
@@ -647,8 +704,51 @@ function generateInvoice(row) {
       payments: paymentData.amounts,
 
       totalPaid: formatMoney_(paymentData.totalPaid),
-      totalCost: formatMoney_(totalCost),
+      totalCost: formatMoney_(totalCost),       // backwards-compatible old placeholder
+      totalRentalCost: formatMoney_(totalCost), // preferred invoice placeholder
       balance: formatMoney_(balance),
+
+      rentalRate: rentalCostNightlyRaw,         // backwards-compatible old placeholder
+      rentalCost: rentalCostNightlyRaw,         // invoice placeholder used in current template
+      rentalCostNightly: rentalCostNightlyRaw,  // preferred invoice placeholder
+
+      NHMRTax: getAgreementValue_(agreementFields, [
+        "NHMRTax",
+        "NH MR Tax",
+        "NH Meals and Rooms Tax",
+        "Meals and Rooms Tax",
+        "M&R Tax",
+        "Tax"
+      ]),
+
+      deliveryCost: getAgreementValue_(agreementFields, [
+        "deliveryCost",
+        "Delivery Cost",
+        "Delivery Fee",
+        "Delivery"
+      ]),
+
+      addOnCost: getAgreementValue_(agreementFields, [
+        "addOnCost",
+        "Add On Cost",
+        "Add-On Cost",
+        "Add Ons",
+        "Add-Ons",
+        "Add On",
+        "Add-On",
+        "Addons"
+      ]),
+
+      paymentTerms: getAgreementValue_(agreementFields, [
+        "paymentTerms",
+        "Payment Terms",
+        "Payment Term",
+        "Terms",
+        "Payment Schedule",
+        "Payment Due",
+        "Due Date",
+        "Balance Due"
+      ]),
 
       invoiceDate: today,
       today: today
@@ -662,6 +762,13 @@ function generateInvoice(row) {
     Object.keys(agreementFields).forEach(key => {
       if (!mergeValues[key]) mergeValues[key] = agreementFields[key];
     });
+
+    addStatus_(
+      statusLog,
+      "Invoice fields",
+      true,
+      `Mapped rentalCost='${mergeValues.rentalCost}', rentalCostNightly='${mergeValues.rentalCostNightly}', totalRentalCost='${mergeValues.totalRentalCost}', NHMRTax='${mergeValues.NHMRTax}', deliveryCost='${mergeValues.deliveryCost}', addOnCost='${mergeValues.addOnCost}', paymentTerms='${mergeValues.paymentTerms}'.`
+    );
 
     replaceInvoicePlaceholders_(invoice.file, mergeValues);
     addStatus_(statusLog, "Invoice merge", true, "Replaced invoice placeholders.");
