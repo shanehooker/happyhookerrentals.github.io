@@ -8,9 +8,10 @@ function MilesFromHome(address) {
     .setMode(Maps.DirectionFinder.Mode.DRIVING)
     .getDirections();
   if (directions && directions.error_message) throw directions.error_message;
-  if (directions && directions.routes && directions.routes[0] && directions.routes[0].legs && directions.routes[0].legs[0] && directions.routes[0].legs[0].distance)
-    distanceInMeters = directions.routes[0].legs[0].distance.value;
+  if (directions && directions.routes && directions.routes[0] && directions.routes[0].legs && directions.routes[0].legs[0] && directions.routes[0].legs[0].distance) {
+    var distanceInMeters = directions.routes[0].legs[0].distance.value;
     return metersToMiles(distanceInMeters);
+  }
   return "unknown";
 }
 
@@ -57,6 +58,17 @@ function showStatusLog_(title, statusLog) {
  */
 const HHR_CALENDAR_ID = "647d50cd910f97384c20ba658a3a4fc3f9a6c4970a4254b227cba66b285a8fca@group.calendar.google.com";
 const HHR_CALENDAR_NAME = "Happy Hooker Rentals";
+const QUOTE_TEMPLATE_DOC_ID = "";
+const QUOTE_TEMPLATE_DOC_NAME = "TemplateRentalAgreement-2026";
+const QUOTE_EMAIL_TEMPLATE_DOC_ID = "";
+const QUOTE_EMAIL_TEMPLATE_DOC_NAME = "TemplateQuoteEmail";
+const QUOTE_TARGET_SUBFOLDER = "2026";
+const QUOTE_FOLDER_ID = "1-uRn7J6lDS9D6Xa7SH6QJb1TOXdg4DlJ";
+const INVOICE_TEMPLATE_ID = "";
+const INVOICE_TEMPLATE_NAME = "TemplateInvoice-2026";
+const BOOKINGS_SHEET_NAME = "Bookings";
+const INCOME_SHEET_NAME = "Income";
+const INVOICE_COLUMN_HEADER = "Invoice";
 
 function getHhrCalendar_() {
   if (HHR_CALENDAR_ID && HHR_CALENDAR_ID.trim() !== "") {
@@ -75,6 +87,26 @@ function getHhrCalendarLookupDescription_() {
     return `calendar ID '${HHR_CALENDAR_ID}'`;
   }
   return `calendar name '${HHR_CALENDAR_NAME}'`;
+}
+
+function getDriveFileByIdOrName_(fileId, fileName) {
+  if (fileId && String(fileId).trim() !== "") {
+    return DriveApp.getFileById(String(fileId).trim());
+  }
+
+  const files = DriveApp.getFilesByName(fileName);
+  if (!files.hasNext()) return null;
+
+  const file = files.next();
+  if (files.hasNext()) {
+    Logger.log(`WARNING - Multiple Drive files found named '${fileName}'. Using the first match.`);
+  }
+
+  return file;
+}
+
+function findExactCell_(sheet, text) {
+  return sheet.createTextFinder(text).matchEntireCell(true).findNext();
 }
 
 /**
@@ -149,22 +181,170 @@ function getNamedRangeDisplayValue_(ss, rangeName) {
   return range.getDisplayValue().trim();
 }
 
-function getGoogleDocAsHtml_(docId) {
-  const exportUrl = `https://docs.google.com/document/d/${docId}/export?format=html`;
+function escapeHtml_(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 
-  const response = UrlFetchApp.fetch(exportUrl, {
-    headers: {
-      Authorization: `Bearer ${ScriptApp.getOAuthToken()}`
-    },
-    muteHttpExceptions: true
-  });
+function wrapHtmlTextSegment_(text, attributes) {
+  let html = escapeHtml_(text).replace(/\r?\n/g, "<br>");
+  if (!attributes) return html;
 
-  const responseCode = response.getResponseCode();
-  if (responseCode !== 200) {
-    throw new Error(`Failed to export email template as HTML. Response code: ${responseCode}`);
+  if (attributes.LINK_URL) {
+    html = `<a href="${escapeHtml_(attributes.LINK_URL)}">${html}</a>`;
+  }
+  if (attributes.UNDERLINE) {
+    html = `<u>${html}</u>`;
+  }
+  if (attributes.ITALIC) {
+    html = `<em>${html}</em>`;
+  }
+  if (attributes.BOLD) {
+    html = `<strong>${html}</strong>`;
   }
 
-  return response.getContentText();
+  return html;
+}
+
+function getRichTextElementHtml_(textElement) {
+  const text = textElement.getText();
+  if (!text) return "";
+
+  const attributeStarts = textElement.getTextAttributeIndices();
+  const htmlParts = [];
+
+  attributeStarts.forEach((start, index) => {
+    const end = index + 1 < attributeStarts.length ? attributeStarts[index + 1] - 1 : text.length - 1;
+    const segmentText = text.slice(start, end + 1);
+    const attributes = textElement.getAttributes(start);
+    htmlParts.push(wrapHtmlTextSegment_(segmentText, attributes));
+  });
+
+  return htmlParts.join("");
+}
+
+function getParagraphTagName_(paragraph) {
+  const heading = paragraph.getHeading();
+  switch (heading) {
+    case DocumentApp.ParagraphHeading.HEADING1:
+    case DocumentApp.ParagraphHeading.TITLE:
+      return "h1";
+    case DocumentApp.ParagraphHeading.HEADING2:
+    case DocumentApp.ParagraphHeading.SUBTITLE:
+      return "h2";
+    case DocumentApp.ParagraphHeading.HEADING3:
+      return "h3";
+    case DocumentApp.ParagraphHeading.HEADING4:
+      return "h4";
+    case DocumentApp.ParagraphHeading.HEADING5:
+      return "h5";
+    case DocumentApp.ParagraphHeading.HEADING6:
+      return "h6";
+    default:
+      return "p";
+  }
+}
+
+function getParagraphInnerHtml_(paragraph) {
+  const htmlParts = [];
+
+  for (let i = 0; i < paragraph.getNumChildren(); i++) {
+    const child = paragraph.getChild(i);
+    const childType = child.getType();
+
+    if (childType === DocumentApp.ElementType.TEXT) {
+      htmlParts.push(getRichTextElementHtml_(child.asText()));
+      continue;
+    }
+
+    if (childType === DocumentApp.ElementType.INLINE_IMAGE) {
+      continue;
+    }
+
+    if (childType === DocumentApp.ElementType.PAGE_BREAK) {
+      htmlParts.push("<br>");
+    }
+  }
+
+  return htmlParts.join("");
+}
+
+function getGoogleDocAsHtml_(docId) {
+  const doc = DocumentApp.openById(docId);
+  const body = doc.getBody();
+  const htmlParts = [];
+  let activeListId = null;
+
+  for (let i = 0; i < body.getNumChildren(); i++) {
+    const child = body.getChild(i);
+    const childType = child.getType();
+
+    if (childType === DocumentApp.ElementType.PARAGRAPH) {
+      if (activeListId) {
+        htmlParts.push("</ul>");
+        activeListId = null;
+      }
+
+      const paragraph = child.asParagraph();
+      const innerHtml = getParagraphInnerHtml_(paragraph);
+      if (!innerHtml) continue;
+
+      const tagName = getParagraphTagName_(paragraph);
+      htmlParts.push(`<${tagName}>${innerHtml}</${tagName}>`);
+      continue;
+    }
+
+    if (childType === DocumentApp.ElementType.LIST_ITEM) {
+      const listItem = child.asListItem();
+      const listId = listItem.getListId();
+
+      if (activeListId !== listId) {
+        if (activeListId) htmlParts.push("</ul>");
+        htmlParts.push("<ul>");
+        activeListId = listId;
+      }
+
+      const innerHtml = getParagraphInnerHtml_(listItem);
+      htmlParts.push(`<li>${innerHtml || "&nbsp;"}</li>`);
+      continue;
+    }
+
+    if (childType === DocumentApp.ElementType.TABLE) {
+      if (activeListId) {
+        htmlParts.push("</ul>");
+        activeListId = null;
+      }
+
+      const table = child.asTable();
+      const rows = [];
+
+      for (let r = 0; r < table.getNumRows(); r++) {
+        const row = table.getRow(r);
+        const cells = [];
+
+        for (let c = 0; c < row.getNumCells(); c++) {
+          const cellParagraphs = row.getCell(c).getParagraphs()
+            .map(getParagraphInnerHtml_)
+            .filter(Boolean)
+            .join("<br>");
+          cells.push(`<td>${cellParagraphs || "&nbsp;"}</td>`);
+        }
+
+        rows.push(`<tr>${cells.join("")}</tr>`);
+      }
+
+      htmlParts.push(`<table border="1" cellpadding="6" cellspacing="0">${rows.join("")}</table>`);
+    }
+  }
+
+  if (activeListId) {
+    htmlParts.push("</ul>");
+  }
+
+  return htmlParts.join("\n");
 }
 
 function stripHtmlForPlainText_(html) {
@@ -182,18 +362,14 @@ function stripHtmlForPlainText_(html) {
 }
 
 function createQuoteDraftEmail_(renterEmail, renterName, agreementFile) {
-  const EMAIL_TEMPLATE_DOC_NAME = "TemplateQuoteEmail";
-
   if (!renterEmail) {
     throw new Error("No renter email found.");
   }
 
-  const templateFiles = DriveApp.getFilesByName(EMAIL_TEMPLATE_DOC_NAME);
-  if (!templateFiles.hasNext()) {
-    throw new Error(`Email template '${EMAIL_TEMPLATE_DOC_NAME}' not found.`);
+  const templateFile = getDriveFileByIdOrName_(QUOTE_EMAIL_TEMPLATE_DOC_ID, QUOTE_EMAIL_TEMPLATE_DOC_NAME);
+  if (!templateFile) {
+    throw new Error(`Email template '${QUOTE_EMAIL_TEMPLATE_DOC_NAME}' not found.`);
   }
-
-  const templateFile = templateFiles.next();
   const firstName = getFirstName_(renterName);
 
   let htmlBody = getGoogleDocAsHtml_(templateFile.getId());
@@ -225,8 +401,6 @@ function createQuote() {
   const statusLog = [];
 
   // CONFIGURATION
-  const TEMPLATE_DOC_NAME = "TemplateRentalAgreement-2026";
-  const TARGET_SUBFOLDER = "2026";
   const QUOTE_SHEET = "Quote";
   const BOOKING_ID_CELL = "bookingId";
   const RENTER_NAME_CELL = "renterName";
@@ -241,6 +415,9 @@ function createQuote() {
   let newDocName = "";
 
   try {
+    if (!quoteSheet) throw new Error(`Sheet '${QUOTE_SHEET}' not found.`);
+    if (!waitingSheet) throw new Error(`Sheet '${WAITING_SHEET}' not found.`);
+
     // STEP 1: Read booking info
     const bookingId = quoteSheet.getRange(BOOKING_ID_CELL).getDisplayValue().trim();
     const renterName = quoteSheet.getRange(RENTER_NAME_CELL).getDisplayValue().trim();
@@ -255,15 +432,14 @@ function createQuote() {
     addStatus_(statusLog, "Quote setup", true, `Booking ${bookingId} for ${renterName}.`);
 
     // STEP 2: Copy TemplateRentalAgreement-2026 doc
-    const files = DriveApp.getFilesByName(TEMPLATE_DOC_NAME);
-    if (!files.hasNext()) {
-      addStatus_(statusLog, "Template lookup", false, `Template document '${TEMPLATE_DOC_NAME}' not found.`);
+    const templateFile = getDriveFileByIdOrName_(QUOTE_TEMPLATE_DOC_ID, QUOTE_TEMPLATE_DOC_NAME);
+    if (!templateFile) {
+      addStatus_(statusLog, "Template lookup", false, `Template document '${QUOTE_TEMPLATE_DOC_NAME}' not found.`);
       showStatusLog_("Create Quote Status", statusLog);
       return;
     }
 
-    const templateFile = files.next();
-    addStatus_(statusLog, "Template lookup", true, `Found ${TEMPLATE_DOC_NAME}.`);
+    addStatus_(statusLog, "Template lookup", true, `Found ${QUOTE_TEMPLATE_DOC_NAME}.`);
 
     const safeBooking = bookingId.replace(/\s+/g, "");
     const safeName = renterName.replace(/\s+/g, "");
@@ -273,9 +449,9 @@ function createQuote() {
       ? templateFile.getParents().next()
       : DriveApp.getRootFolder();
 
-    let targetFolder = parentFolder.getFoldersByName(TARGET_SUBFOLDER).hasNext()
-      ? parentFolder.getFoldersByName(TARGET_SUBFOLDER).next()
-      : parentFolder.createFolder(TARGET_SUBFOLDER);
+    let targetFolder = parentFolder.getFoldersByName(QUOTE_TARGET_SUBFOLDER).hasNext()
+      ? parentFolder.getFoldersByName(QUOTE_TARGET_SUBFOLDER).next()
+      : parentFolder.createFolder(QUOTE_TARGET_SUBFOLDER);
 
     newFile = templateFile.makeCopy(newDocName, targetFolder);
     addStatus_(statusLog, "Agreement document", true, `Created ${newDocName}.`);
@@ -302,19 +478,19 @@ function createQuote() {
     }
 
     // STEP 4: Append to Waiting to Book
-    const waitingHeaders = waitingSheet.getRange("A1:N1").getValues()[0];
+    const waitingHeaders = waitingSheet.getRange(1, 1, 1, waitingSheet.getLastColumn()).getValues()[0];
     const quoteData = {};
 
     waitingHeaders.forEach(header => {
       if (!header) return;
-      const cell = quoteSheet.createTextFinder(header).findNext();
+      const cell = findExactCell_(quoteSheet, header);
       if (cell) {
         const value = quoteSheet.getRange(cell.getRow(), cell.getColumn() + 1).getDisplayValue();
         quoteData[header] = value;
       }
     });
 
-    const finder = waitingSheet.createTextFinder("{{nextQuote}}").findNext();
+    const finder = findExactCell_(waitingSheet, "{{nextQuote}}");
     if (!finder) {
       addStatus_(statusLog, "Waiting to Book", false, "Cannot find {{nextQuote}} placeholder.");
       showStatusLog_("Create Quote Status", statusLog);
@@ -325,13 +501,14 @@ function createQuote() {
     waitingSheet.insertRowBefore(insertRow);
     const newRow = insertRow;
 
-    waitingHeaders.forEach((header, i) => {
+    const rowValues = waitingHeaders.map(header => {
       let value = quoteData[header] || "";
       if (header === "Outdoorsy") value = "N";
       if (header === "Quote Date" || header === "Booking Date") value = today;
       if (header === "Booking ID") value = bookingId;
-      waitingSheet.getRange(newRow, i + 1).setValue(value);
+      return value;
     });
+    waitingSheet.getRange(newRow, 1, 1, rowValues.length).setValues([rowValues]);
 
     addStatus_(statusLog, "Waiting to Book", true, `Inserted quote row ${newRow}.`);
 
@@ -418,13 +595,16 @@ function createQuote() {
 function bookReservation(row) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const waitingSheet = ss.getSheetByName("Waiting to Book");
-  const bookingsSheet = ss.getSheetByName("Bookings");
+  const bookingsSheet = ss.getSheetByName(BOOKINGS_SHEET_NAME);
   const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "MM/dd/yyyy");
+  const followUpWarnings = [];
 
   if (!row) return;
+  if (!waitingSheet) throw new Error("Sheet 'Waiting to Book' not found.");
+  if (!bookingsSheet) throw new Error(`Sheet '${BOOKINGS_SHEET_NAME}' not found.`);
 
   // STEP 1: Find the {{nextRenter}} placeholder in Bookings
-  const nextFinder = bookingsSheet.createTextFinder("{{nextRenter}}").findNext();
+  const nextFinder = findExactCell_(bookingsSheet, "{{nextRenter}}");
   if (!nextFinder) {
     SpreadsheetApp.getUi().alert("Cannot find {{nextRenter}} placeholder in Bookings tab.");
     return;
@@ -438,8 +618,8 @@ function bookReservation(row) {
   placeholderRange.copyTo(bookingsSheet.getRange(newRow, 1), { contentsOnly: false });
 
   // STEP 3: Move only matching header values from Waiting to Book → Bookings
-  const waitingHeaders = waitingSheet.getRange("A1:N1").getValues()[0];
-  const bookingsHeaders = bookingsSheet.getRange("A3:U3").getValues()[0]; // extend to all columns in Bookings
+  const waitingHeaders = waitingSheet.getRange(1, 1, 1, waitingSheet.getLastColumn()).getValues()[0];
+  const bookingsHeaders = bookingsSheet.getRange(3, 1, 1, bookingsSheet.getLastColumn()).getValues()[0];
   const rowValues = waitingSheet.getRange(row, 1, 1, waitingHeaders.length).getValues()[0];
 
   const waitingData = {};
@@ -457,10 +637,7 @@ function bookReservation(row) {
     }
   });
 
-  // STEP 4: Delete the old row from Waiting to Book
-  waitingSheet.deleteRow(row);
-
-  // --- STEP 5: Update the related calendar event ---
+  // --- STEP 4: Update the related calendar event ---
   try {
     const camper = waitingData["Camper"];
     const location = waitingData["Location"];
@@ -485,12 +662,11 @@ function bookReservation(row) {
       }
     }
   } catch(e) {
+    followUpWarnings.push("Calendar update failed: " + e);
     Logger.log("Calendar update error: " + e);
   }
-  // --- STEP 6: Rename the Google Doc/Sheet for this quote ---
+  // --- STEP 5: Rename the Google Doc/Sheet for this quote ---
   try {
-    const QUOTE_FOLDER_ID = "1-uRn7J6lDS9D6Xa7SH6QJb1TOXdg4DlJ";
-
     const bookingId = String(waitingData["Booking ID"] || "").trim();
     const renterName = String(waitingData["Renter Name"] || "").trim();
 
@@ -511,10 +687,15 @@ function bookReservation(row) {
       Logger.log(`File '${oldFileName}' not found in quote folder ID ${QUOTE_FOLDER_ID}`);
     }
   } catch (err) {
+    followUpWarnings.push("Quote file rename failed: " + err);
     Logger.log("Error renaming quote file: " + err);
   }
 
-  SpreadsheetApp.getUi().alert(`Reservation for ${waitingData["Renter Name"]} has been booked.`);
+  // STEP 6: Delete the old row from Waiting to Book
+  waitingSheet.deleteRow(row);
+
+  const warningMessage = followUpWarnings.length ? `\n\nWarnings:\n- ${followUpWarnings.join("\n- ")}` : "";
+  SpreadsheetApp.getUi().alert(`Reservation for ${waitingData["Renter Name"]} has been booked.${warningMessage}`);
 }
 
 
@@ -522,11 +703,6 @@ function bookReservation(row) {
 /**
  * Invoice configuration and helper functions
  */
-const INVOICE_TEMPLATE_NAME = "TemplateInvoice-2026";
-const QUOTE_FOLDER_ID = "1-uRn7J6lDS9D6Xa7SH6QJb1TOXdg4DlJ";
-const BOOKINGS_SHEET_NAME = "Bookings";
-const INCOME_SHEET_NAME = "Income";
-const INVOICE_COLUMN_HEADER = "Invoice";
 
 function getColumnByHeader_(sheet, headerRow, headerName) {
   const headers = sheet.getRange(headerRow, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
@@ -558,9 +734,12 @@ function safeNoSpaces_(value) {
 }
 
 function parseMoney_(value) {
-  const cleaned = String(value || "").replace(/[^0-9.-]/g, "");
+  const raw = String(value || "").trim();
+  const isParenthesizedNegative = /^\(.*\)$/.test(raw);
+  const cleaned = raw.replace(/[^0-9.-]/g, "");
   const num = Number(cleaned);
-  return isNaN(num) ? 0 : num;
+  if (isNaN(num)) return 0;
+  return isParenthesizedNegative ? -Math.abs(num) : num;
 }
 
 function formatMoney_(value) {
@@ -575,34 +754,41 @@ function findRentalAgreementFile_(bookingId, renterName) {
   const fileName = `${safeBooking}-${safeName}-RentalAgreement`;
   const files = folder.getFilesByName(fileName);
 
-  if (files.hasNext()) return files.next();
+  if (files.hasNext()) {
+    const file = files.next();
+    if (files.hasNext()) {
+      Logger.log(`WARNING - Multiple rental agreement files found named '${fileName}'. Using the first match.`);
+    }
+    return file;
+  }
 
   throw new Error(`Rental agreement not found: ${fileName}`);
 }
 
 function createInvoiceFromTemplate_(bookingId, renterName) {
-  const templateFiles = DriveApp.getFilesByName(INVOICE_TEMPLATE_NAME);
-
-  if (!templateFiles.hasNext()) {
+  const templateFile = getDriveFileByIdOrName_(INVOICE_TEMPLATE_ID, INVOICE_TEMPLATE_NAME);
+  if (!templateFile) {
     throw new Error(`Invoice template '${INVOICE_TEMPLATE_NAME}' not found.`);
   }
 
-  const templateFile = templateFiles.next();
   const folder = DriveApp.getFolderById(QUOTE_FOLDER_ID);
 
   const safeBooking = safeNoSpaces_(bookingId);
   const safeName = safeNoSpaces_(renterName);
   const invoiceName = `${safeBooking}-${safeName}-Invoice`;
 
-  // Replace existing invoice by moving any existing invoice with this exact name to trash.
+  const newFile = templateFile.makeCopy(invoiceName, folder);
+  const newFileId = newFile.getId();
+
+  // Replace existing invoices only after the new copy has been created successfully.
   const existingFiles = folder.getFilesByName(invoiceName);
   let replacedCount = 0;
   while (existingFiles.hasNext()) {
-    existingFiles.next().setTrashed(true);
+    const existingFile = existingFiles.next();
+    if (existingFile.getId() === newFileId) continue;
+    existingFile.setTrashed(true);
     replacedCount++;
   }
-
-  const newFile = templateFile.makeCopy(invoiceName, folder);
 
   return {
     file: newFile,
