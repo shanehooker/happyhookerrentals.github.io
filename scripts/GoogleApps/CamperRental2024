@@ -181,6 +181,11 @@ function getNamedRangeDisplayValue_(ss, rangeName) {
   return range.getDisplayValue().trim();
 }
 
+function getQuoteType_(ss) {
+  const outdoorsyId = getNamedRangeDisplayValue_(ss, "outdoorsyId");
+  return /^\d{8}$/.test(outdoorsyId) ? "Outdoorsy" : "Direct";
+}
+
 function escapeHtml_(text) {
   return String(text || "")
     .replace(/&/g, "&amp;")
@@ -410,6 +415,7 @@ function createQuote() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const quoteSheet = ss.getSheetByName(QUOTE_SHEET);
   const waitingSheet = ss.getSheetByName(WAITING_SHEET);
+  const quoteType = getQuoteType_(ss);
 
   let newFile = null;
   let newDocName = "";
@@ -463,6 +469,7 @@ function createQuote() {
     const mergeValues = getNamedRangeMergeValues_(ss);
     mergeValues.today = today;
     mergeValues.date = today;
+    mergeValues.outdoorsyRentalCost = getNamedRangeDisplayValue_(ss, "outdoorsyTotalCost");
 
     replaceNamedRangePlaceholders_(doc, mergeValues);
     doc.saveAndClose();
@@ -470,11 +477,15 @@ function createQuote() {
     addStatus_(statusLog, "Template merge", true, "Replaced named-range placeholders in the agreement doc.");
 
     // STEP 3B: Create draft email after the agreement has been fully merged
-    try {
-      const draftStatus = createQuoteDraftEmail_(renterEmail, renterName, newFile);
-      addStatus_(statusLog, "Draft email", true, draftStatus);
-    } catch (e) {
-      addStatus_(statusLog, "Draft email", false, e.toString());
+    if (quoteType === "Outdoorsy") {
+      addStatus_(statusLog, "Email quote skipped", true, "Outdoorsy Quote");
+    } else {
+      try {
+        const draftStatus = createQuoteDraftEmail_(renterEmail, renterName, newFile);
+        addStatus_(statusLog, "Draft email", true, draftStatus);
+      } catch (e) {
+        addStatus_(statusLog, "Draft email", false, e.toString());
+      }
     }
 
     // STEP 4: Append to Waiting to Book
@@ -500,12 +511,14 @@ function createQuote() {
     const insertRow = finder.getRow();
     waitingSheet.insertRowBefore(insertRow);
     const newRow = insertRow;
+    const nextPaymentValue = quoteData["End Date"] || getMergeValue_(mergeValues, ["endDate", "End Date", "rentalEndDate"]) || "";
 
     const rowValues = waitingHeaders.map(header => {
       let value = quoteData[header] || "";
-      if (header === "Outdoorsy") value = "N";
+      if (header === "Outdoorsy") value = quoteType === "Outdoorsy" ? "Y" : "N";
       if (header === "Quote Date" || header === "Booking Date") value = today;
       if (header === "Booking ID") value = bookingId;
+      if (header === "Next Payment") value = nextPaymentValue;
       return value;
     });
     waitingSheet.getRange(newRow, 1, 1, rowValues.length).setValues([rowValues]);
