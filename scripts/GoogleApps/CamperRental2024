@@ -66,6 +66,8 @@ const QUOTE_TARGET_SUBFOLDER = "2026";
 const QUOTE_FOLDER_ID = "1-uRn7J6lDS9D6Xa7SH6QJb1TOXdg4DlJ";
 const INVOICE_TEMPLATE_ID = "";
 const INVOICE_TEMPLATE_NAME = "TemplateInvoice-2026";
+const CONTACTS_SPREADSHEET_ID = "1GVOBCWJyu-61WxOjqkPDQg5jDE6RNtr4SmwVgMimxas";
+const CONTACTS_SHEET_NAME = "Contacts";
 const BOOKINGS_SHEET_NAME = "Bookings";
 const INCOME_SHEET_NAME = "Income";
 const INVOICE_COLUMN_HEADER = "Invoice";
@@ -179,6 +181,111 @@ function getNamedRangeDisplayValue_(ss, rangeName) {
   const range = ss.getRangeByName(rangeName);
   if (!range) return "";
   return range.getDisplayValue().trim();
+}
+
+function insertContactRow_(renterName, renterPhone, renterEmail) {
+  if (!renterName) {
+    throw new Error("Cannot add contact row: renter name is blank.");
+  }
+
+  const contactsSpreadsheet = SpreadsheetApp.openById(CONTACTS_SPREADSHEET_ID);
+  const contactsSheet = contactsSpreadsheet.getSheetByName(CONTACTS_SHEET_NAME);
+
+  if (!contactsSheet) {
+    throw new Error(`Contacts sheet '${CONTACTS_SHEET_NAME}' not found in spreadsheet ${CONTACTS_SPREADSHEET_ID}.`);
+  }
+
+  const nextCell = findExactCell_(contactsSheet, "{{next}}");
+  if (!nextCell) {
+    throw new Error(`Cannot find {{next}} placeholder in '${CONTACTS_SHEET_NAME}'.`);
+  }
+
+  const headerRow = 1;
+  const headers = contactsSheet.getRange(headerRow, 1, 1, contactsSheet.getLastColumn()).getDisplayValues()[0];
+  const nameCol = getColumnIndexByHeaderName_(headers, "Renter Name");
+  const phoneCol = getColumnIndexByHeaderName_(headers, "Renter Phone");
+  const emailCol = getColumnIndexByHeaderName_(headers, "Renter Email");
+
+  if (!nameCol) {
+    throw new Error(`Column 'Renter Name' not found in '${CONTACTS_SHEET_NAME}'.`);
+  }
+
+  const duplicateRow = findExistingContactRow_(contactsSheet, headerRow, nextCell.getRow(), {
+    renterName,
+    renterPhone,
+    renterEmail,
+    nameCol,
+    phoneCol,
+    emailCol
+  });
+
+  if (duplicateRow) {
+    return {
+      row: duplicateRow,
+      yearAdded: "",
+      wasAdded: false
+    };
+  }
+
+  const insertRow = nextCell.getRow();
+  contactsSheet.insertRowBefore(insertRow);
+
+  const currentYear = String(new Date().getFullYear());
+  const rowValues = headers.map(header => {
+    const cleanHeader = String(header || "").trim();
+    if (cleanHeader === "Renter Name") return renterName;
+    if (cleanHeader === "Renter Phone") return renterPhone || "";
+    if (cleanHeader === "Renter Email") return renterEmail || "";
+    if (cleanHeader === "Year Added") return currentYear;
+    return "";
+  });
+
+  contactsSheet.getRange(insertRow, 1, 1, rowValues.length).setValues([rowValues]);
+
+  return {
+    row: insertRow,
+    yearAdded: currentYear,
+    wasAdded: true
+  };
+}
+
+function getColumnIndexByHeaderName_(headers, headerName) {
+  for (let i = 0; i < headers.length; i++) {
+    if (String(headers[i] || "").trim() === headerName) return i + 1;
+  }
+  return 0;
+}
+
+function findExistingContactRow_(sheet, headerRow, nextRow, contactInfo) {
+  const lastDataRow = nextRow - 1;
+  if (lastDataRow <= headerRow) return 0;
+
+  const lastCol = sheet.getLastColumn();
+  const values = sheet.getRange(headerRow + 1, 1, lastDataRow - headerRow, lastCol).getDisplayValues();
+  const normalizedName = normalizeContactValue_(contactInfo.renterName);
+  const normalizedPhone = normalizePhoneNumberForMatch_(contactInfo.renterPhone);
+  const normalizedEmail = normalizeContactValue_(contactInfo.renterEmail);
+
+  for (let i = 0; i < values.length; i++) {
+    const rowValues = values[i];
+    const rowName = normalizeContactValue_(rowValues[contactInfo.nameCol - 1]);
+    const rowPhone = normalizePhoneNumberForMatch_(contactInfo.phoneCol ? rowValues[contactInfo.phoneCol - 1] : "");
+    const rowEmail = normalizeContactValue_(contactInfo.emailCol ? rowValues[contactInfo.emailCol - 1] : "");
+
+    if (normalizedEmail && rowEmail && normalizedEmail === rowEmail) return headerRow + 1 + i;
+    if (normalizedPhone && rowPhone && normalizedPhone === rowPhone) return headerRow + 1 + i;
+    if (normalizedName && rowName && normalizedName === rowName) return headerRow + 1 + i;
+  }
+
+  return 0;
+}
+
+function normalizeContactValue_(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizePhoneNumberForMatch_(value) {
+  return String(value || "").replace(/\D/g, "");
 }
 
 function escapeHtml_(text) {
@@ -421,6 +528,7 @@ function createQuote() {
     // STEP 1: Read booking info
     const bookingId = quoteSheet.getRange(BOOKING_ID_CELL).getDisplayValue().trim();
     const renterName = quoteSheet.getRange(RENTER_NAME_CELL).getDisplayValue().trim();
+    const renterPhone = getNamedRangeDisplayValue_(ss, "renterPhone") || getValueNextToLabel_(quoteSheet, "Renter Phone");
     const renterEmail = getNamedRangeDisplayValue_(ss, "renterEmail") || getValueNextToLabel_(quoteSheet, "Renter Email");
 
     if (!bookingId || !renterName) {
@@ -475,6 +583,28 @@ function createQuote() {
       addStatus_(statusLog, "Draft email", true, draftStatus);
     } catch (e) {
       addStatus_(statusLog, "Draft email", false, e.toString());
+    }
+
+    // STEP 3C: Insert renter into Contacts sheet
+    try {
+      const contactInsert = insertContactRow_(renterName, renterPhone, renterEmail);
+      if (contactInsert.wasAdded) {
+        addStatus_(
+          statusLog,
+          "Contacts",
+          true,
+          `Inserted renter into '${CONTACTS_SHEET_NAME}' row ${contactInsert.row} with Year Added ${contactInsert.yearAdded}.`
+        );
+      } else {
+        addStatus_(
+          statusLog,
+          "Contacts",
+          true,
+          `Renter already found in '${CONTACTS_SHEET_NAME}' row ${contactInsert.row}.`
+        );
+      }
+    } catch (e) {
+      addStatus_(statusLog, "Contacts", false, e.toString());
     }
 
     // STEP 4: Append to Waiting to Book
