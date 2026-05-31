@@ -17,6 +17,7 @@ const CONTACTS_CONTROL_ROW = 1;
 const CONTACTS_HEADER_ROW = 2;
 const CONTACTS_FIRST_DATA_ROW = 3;
 const CONTACTS_SELECT_COLUMN = 1;
+const CONTACTS_SELECT_ALL_RANGE_NAME = "selectAll";
 const CONTACTS_EMAIL_SUBJECT_RANGE_NAME = "emailSubject";
 const CONTACTS_EMAIL_DRAFT_SUBJECT = "Happy Hooker Rentals";
 const HHR_EMAIL_ADDRESS = "happyhookerrentals@gmail.com";
@@ -65,6 +66,7 @@ function addGenerateContactsMenu_() {
     SpreadsheetApp.getUi()
       .createMenu("Happy Hooker Rentals")
       .addItem("Create Email", "createSelectedContactsEmail")
+      .addItem("Setup Contacts Selection", "setupContactsSelection")
       .addItem("Import CustomerList", "ImportCustomerListToContacts")
       .addItem("Import Google Contacts", "ImportGoogleContactsToContacts")
       .addItem("Generate Contacts", "GenerateContacts")
@@ -76,6 +78,25 @@ function addGenerateContactsMenu_() {
 
 function onOpen() {
   addGenerateContactsMenu_();
+}
+
+function onEdit(e) {
+  try {
+    if (!e || !e.range) return;
+
+    const editedRange = e.range;
+    const editedSheet = editedRange.getSheet();
+    if (!editedSheet || editedSheet.getName() !== CONTACTS_MASTER_SHEET_NAME) return;
+
+    const selectAllRange = getContactsSelectAllRange_();
+    if (!selectAllRange) return;
+    if (editedRange.getSheet().getSheetId() !== selectAllRange.getSheet().getSheetId()) return;
+    if (editedRange.getA1Notation() !== selectAllRange.getA1Notation()) return;
+
+    toggleAllContactSelections_(editedSheet, e.value === "TRUE");
+  } catch (err) {
+    Logger.log("GenerateContacts onEdit error: " + err);
+  }
 }
 
 function ImportCustomerListToContacts() {
@@ -635,12 +656,34 @@ function normalizeHeader_(value) {
   return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+function getContactsSpreadsheet_() {
+  return SpreadsheetApp.openById(CONTACTS_DESTINATION_SPREADSHEET_ID);
+}
+
+function getContactsSheet_() {
+  const spreadsheet = getContactsSpreadsheet_();
+  const contactsSheet = spreadsheet.getSheetByName(CONTACTS_MASTER_SHEET_NAME);
+  if (!contactsSheet) {
+    throw new Error(`Sheet '${CONTACTS_MASTER_SHEET_NAME}' not found.`);
+  }
+  return contactsSheet;
+}
+
 function findExactCell_(sheet, text) {
   return sheet.createTextFinder(text).matchEntireCell(true).findNext();
 }
 
 function buildCheckboxRule_() {
   return SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build();
+}
+
+function getContactsSelectAllRange_() {
+  const spreadsheet = getContactsSpreadsheet_();
+  const selectAllRange = spreadsheet.getRangeByName(CONTACTS_SELECT_ALL_RANGE_NAME);
+  if (!selectAllRange) {
+    throw new Error(`Named range '${CONTACTS_SELECT_ALL_RANGE_NAME}' not found.`);
+  }
+  return selectAllRange;
 }
 
 function findHeaderColumnInRow_(headers, possibleHeaders) {
@@ -746,6 +789,62 @@ function insertContactsSheetRow_(sheet, headers, renterName, renterPhone, renter
   return insertRow;
 }
 
+function setupContactsSelection() {
+  const contactsSheet = getContactsSheet_();
+  const statusLog = [];
+  const nextCell = findExactCell_(contactsSheet, "{{next}}");
+
+  if (!nextCell) {
+    addGenerateContactsStatus_(statusLog, "Contacts selection", false, `Cannot find {{next}} placeholder in '${CONTACTS_MASTER_SHEET_NAME}'.`);
+    showGenerateContactsStatus_("Contacts Selection Setup", statusLog);
+    return;
+  }
+
+  const selectAllRange = getContactsSelectAllRange_();
+  selectAllRange.setDataValidation(buildCheckboxRule_()).setValue(false);
+  selectAllRange.offset(0, 1).setValue("Select All");
+
+  const dataRowCount = nextCell.getRow() - CONTACTS_FIRST_DATA_ROW;
+  if (dataRowCount > 0) {
+    const range = contactsSheet.getRange(CONTACTS_FIRST_DATA_ROW, CONTACTS_SELECT_COLUMN, dataRowCount, 1);
+    const currentValues = range.getValues().map(row => [row[0] === true]);
+    range.setDataValidation(buildCheckboxRule_());
+    range.setValues(currentValues);
+  }
+
+  addGenerateContactsStatus_(statusLog, "Contacts selection", true, `Checkboxes are ready in ${selectAllRange.getA1Notation()} and A${CONTACTS_FIRST_DATA_ROW}:A.`);
+  showGenerateContactsStatus_("Contacts Selection Setup", statusLog);
+}
+
+function toggleAllContactSelections_(contactsSheet, shouldSelect) {
+  const nextCell = findExactCell_(contactsSheet, "{{next}}");
+  if (!nextCell) {
+    throw new Error(`Cannot find {{next}} placeholder in '${CONTACTS_MASTER_SHEET_NAME}'.`);
+  }
+
+  const dataRowCount = nextCell.getRow() - CONTACTS_FIRST_DATA_ROW;
+  if (dataRowCount <= 0) return 0;
+
+  const values = Array.from({ length: dataRowCount }, () => [shouldSelect]);
+  contactsSheet.getRange(CONTACTS_FIRST_DATA_ROW, CONTACTS_SELECT_COLUMN, dataRowCount, 1).setValues(values);
+  return dataRowCount;
+}
+
+function clearAllContactSelections_(contactsSheet) {
+  const nextCell = findExactCell_(contactsSheet, "{{next}}");
+  if (!nextCell) {
+    throw new Error(`Cannot find {{next}} placeholder in '${CONTACTS_MASTER_SHEET_NAME}'.`);
+  }
+
+  const dataRowCount = nextCell.getRow() - CONTACTS_FIRST_DATA_ROW;
+  if (dataRowCount > 0) {
+    contactsSheet.getRange(CONTACTS_FIRST_DATA_ROW, CONTACTS_SELECT_COLUMN, dataRowCount, 1)
+      .setValues(Array.from({ length: dataRowCount }, () => [false]));
+  }
+
+  getContactsSelectAllRange_().setValue(false);
+}
+
 function getPreferredDraftFromAddress_() {
   const activeEmail = Session.getActiveUser().getEmail();
   if (String(activeEmail || "").toLowerCase() === HHR_EMAIL_ADDRESS.toLowerCase()) {
@@ -760,14 +859,17 @@ function getPreferredDraftFromAddress_() {
   return "";
 }
 
-function createSelectedContactsEmail() {
-  const spreadsheet = SpreadsheetApp.openById(CONTACTS_DESTINATION_SPREADSHEET_ID);
-  const contactsSheet = spreadsheet.getSheetByName(CONTACTS_MASTER_SHEET_NAME);
+function isUsableRecipientEmail_(value) {
+  const normalizedEmail = normalizeEmail_(value);
+  if (!normalizedEmail) return false;
+  if (normalizedEmail === "outdoorsy" || normalizedEmail === "n/a") return false;
+  if (normalizedEmail === normalizeEmail_(HHR_EMAIL_ADDRESS)) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
+}
 
-  if (!contactsSheet) {
-    SpreadsheetApp.getUi().alert("Create Email", `Sheet '${CONTACTS_MASTER_SHEET_NAME}' not found.`, SpreadsheetApp.getUi().ButtonSet.OK);
-    return;
-  }
+function createSelectedContactsEmail() {
+  const spreadsheet = getContactsSpreadsheet_();
+  const contactsSheet = getContactsSheet_();
 
   const nextCell = findExactCell_(contactsSheet, "{{next}}");
   if (!nextCell) {
@@ -799,7 +901,7 @@ function createSelectedContactsEmail() {
 
     selectedCount++;
     const renterEmail = String(rowValues[emailCol - 1] || "").trim();
-    if (!renterEmail) return;
+    if (!isUsableRecipientEmail_(renterEmail)) return;
 
     const normalizedEmail = renterEmail.toLowerCase();
     if (seenEmails[normalizedEmail]) return;
@@ -813,9 +915,7 @@ function createSelectedContactsEmail() {
   }
 
   if (!selectedEmails.length) {
-    contactsSheet.getRange(CONTACTS_FIRST_DATA_ROW, CONTACTS_SELECT_COLUMN, dataRowCount, 1)
-      .setValues(Array.from({ length: dataRowCount }, () => [false]));
-    contactsSheet.getRange(CONTACTS_CONTROL_ROW, CONTACTS_SELECT_COLUMN).setValue(false);
+    clearAllContactSelections_(contactsSheet);
     SpreadsheetApp.getUi().alert("Create Email", "Selected renters did not have any email addresses.", SpreadsheetApp.getUi().ButtonSet.OK);
     return;
   }
@@ -843,9 +943,7 @@ function createSelectedContactsEmail() {
     options
   );
 
-  contactsSheet.getRange(CONTACTS_FIRST_DATA_ROW, CONTACTS_SELECT_COLUMN, dataRowCount, 1)
-    .setValues(Array.from({ length: dataRowCount }, () => [false]));
-  contactsSheet.getRange(CONTACTS_CONTROL_ROW, CONTACTS_SELECT_COLUMN).setValue(false);
+  clearAllContactSelections_(contactsSheet);
 
   SpreadsheetApp.getUi().alert(
     "Create Email",

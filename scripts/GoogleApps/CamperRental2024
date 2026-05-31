@@ -83,7 +83,7 @@ const CONTACTS_CONTROL_ROW = 1;
 const CONTACTS_HEADER_ROW = 2;
 const CONTACTS_FIRST_DATA_ROW = 3;
 const CONTACTS_SELECT_COLUMN = 1;
-const CONTACTS_SELECT_ALL_LABEL_CELL = "B1";
+const CONTACTS_SELECT_ALL_RANGE_NAME = "selectAll";
 const CONTACTS_EMAIL_DRAFT_SUBJECT = "Happy Hooker Rentals";
 const HHR_EMAIL_ADDRESS = "happyhookerrentals@gmail.com";
 
@@ -199,7 +199,7 @@ function getNamedRangeDisplayValue_(ss, rangeName) {
 }
 
 function getContactsSheet_() {
-  const contactsSpreadsheet = SpreadsheetApp.openById(CONTACTS_SPREADSHEET_ID);
+  const contactsSpreadsheet = getContactsSpreadsheet_();
   const contactsSheet = contactsSpreadsheet.getSheetByName(CONTACTS_SHEET_NAME);
 
   if (!contactsSheet) {
@@ -209,8 +209,21 @@ function getContactsSheet_() {
   return contactsSheet;
 }
 
+function getContactsSpreadsheet_() {
+  return SpreadsheetApp.openById(CONTACTS_SPREADSHEET_ID);
+}
+
 function buildCheckboxRule_() {
   return SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build();
+}
+
+function getContactsSelectAllRange_() {
+  const contactsSpreadsheet = getContactsSpreadsheet_();
+  const selectAllRange = contactsSpreadsheet.getRangeByName(CONTACTS_SELECT_ALL_RANGE_NAME);
+  if (!selectAllRange) {
+    throw new Error(`Named range '${CONTACTS_SELECT_ALL_RANGE_NAME}' not found in spreadsheet ${CONTACTS_SPREADSHEET_ID}.`);
+  }
+  return selectAllRange;
 }
 
 function addSpreadsheetMenu_() {
@@ -367,8 +380,9 @@ function setupContactsSelection() {
     return;
   }
 
-  contactsSheet.getRange(CONTACTS_CONTROL_ROW, CONTACTS_SELECT_COLUMN).setDataValidation(buildCheckboxRule_()).setValue(false);
-  contactsSheet.getRange(CONTACTS_SELECT_ALL_LABEL_CELL).setValue("Select All");
+  const selectAllRange = getContactsSelectAllRange_();
+  selectAllRange.setDataValidation(buildCheckboxRule_()).setValue(false);
+  selectAllRange.offset(0, 1).setValue("Select All");
 
   const dataRowCount = nextCell.getRow() - CONTACTS_FIRST_DATA_ROW;
   if (dataRowCount > 0) {
@@ -378,7 +392,7 @@ function setupContactsSelection() {
     range.setValues(currentValues);
   }
 
-  addStatus_(statusLog, "Contacts selection", true, `Checkboxes are ready in A${CONTACTS_CONTROL_ROW} and A${CONTACTS_FIRST_DATA_ROW}:A.`);
+  addStatus_(statusLog, "Contacts selection", true, `Checkboxes are ready in ${selectAllRange.getA1Notation()} and A${CONTACTS_FIRST_DATA_ROW}:A.`);
   showStatusLog_("Contacts Selection Setup", statusLog);
 }
 
@@ -396,6 +410,21 @@ function toggleAllContactSelections_(contactsSheet, shouldSelect) {
   return dataRowCount;
 }
 
+function clearAllContactSelections_(contactsSheet) {
+  const nextCell = findExactCell_(contactsSheet, "{{next}}");
+  if (!nextCell) {
+    throw new Error(`Cannot find {{next}} placeholder in '${CONTACTS_SHEET_NAME}'.`);
+  }
+
+  const dataRowCount = nextCell.getRow() - CONTACTS_FIRST_DATA_ROW;
+  if (dataRowCount > 0) {
+    contactsSheet.getRange(CONTACTS_FIRST_DATA_ROW, CONTACTS_SELECT_COLUMN, dataRowCount, 1)
+      .setValues(Array.from({ length: dataRowCount }, () => [false]));
+  }
+
+  getContactsSelectAllRange_().setValue(false);
+}
+
 function getPreferredDraftFromAddress_() {
   const activeEmail = Session.getActiveUser().getEmail();
   if (String(activeEmail || "").toLowerCase() === HHR_EMAIL_ADDRESS.toLowerCase()) {
@@ -408,6 +437,14 @@ function getPreferredDraftFromAddress_() {
   }
 
   return "";
+}
+
+function isUsableRecipientEmail_(value) {
+  const normalizedEmail = normalizeContactValue_(value);
+  if (!normalizedEmail) return false;
+  if (normalizedEmail === "outdoorsy" || normalizedEmail === "n/a") return false;
+  if (normalizedEmail === normalizeContactValue_(HHR_EMAIL_ADDRESS)) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
 }
 
 function createSelectedContactsEmail() {
@@ -443,7 +480,7 @@ function createSelectedContactsEmail() {
 
     selectedCount++;
     const renterEmail = String(rowValues[emailCol - 1] || "").trim();
-    if (!renterEmail) return;
+    if (!isUsableRecipientEmail_(renterEmail)) return;
 
     const normalizedEmail = renterEmail.toLowerCase();
     if (seenEmails[normalizedEmail]) return;
@@ -457,8 +494,7 @@ function createSelectedContactsEmail() {
   }
 
   if (!selectedEmails.length) {
-    toggleAllContactSelections_(contactsSheet, false);
-    contactsSheet.getRange(CONTACTS_CONTROL_ROW, CONTACTS_SELECT_COLUMN).setValue(false);
+    clearAllContactSelections_(contactsSheet);
     SpreadsheetApp.getUi().alert("Create Email", "Selected renters did not have any email addresses.", SpreadsheetApp.getUi().ButtonSet.OK);
     return;
   }
@@ -481,8 +517,7 @@ function createSelectedContactsEmail() {
     options
   );
 
-  toggleAllContactSelections_(contactsSheet, false);
-  contactsSheet.getRange(CONTACTS_CONTROL_ROW, CONTACTS_SELECT_COLUMN).setValue(false);
+  clearAllContactSelections_(contactsSheet);
 
   SpreadsheetApp.getUi().alert(
     "Create Email",
@@ -1909,9 +1944,11 @@ function onEditHandler(e) {
     const ui = SpreadsheetApp.getUi();
 
     if (sheetName === CONTACTS_SHEET_NAME) {
-      if (editedCol !== CONTACTS_SELECT_COLUMN) return;
-
-      if (editedRow === CONTACTS_CONTROL_ROW) {
+      const selectAllRange = getContactsSelectAllRange_();
+      if (
+        range.getSheet().getSheetId() === selectAllRange.getSheet().getSheetId() &&
+        range.getA1Notation() === selectAllRange.getA1Notation()
+      ) {
         toggleAllContactSelections_(sheet, e.value === "TRUE");
         return;
       }
