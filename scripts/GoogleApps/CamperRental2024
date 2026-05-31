@@ -274,12 +274,18 @@ function findExistingContactRow_(sheet, headerRow, nextRow, contactInfo) {
   const normalizedName = normalizeContactValue_(contactInfo.renterName);
   const normalizedPhone = normalizePhoneNumberForMatch_(contactInfo.renterPhone);
   const normalizedEmail = normalizeContactValue_(contactInfo.renterEmail);
+  const useNameOnlyMatch = normalizedEmail === "outdoorsy";
 
   for (let i = 0; i < values.length; i++) {
     const rowValues = values[i];
     const rowName = normalizeContactValue_(rowValues[contactInfo.nameCol - 1]);
     const rowPhone = normalizePhoneNumberForMatch_(contactInfo.phoneCol ? rowValues[contactInfo.phoneCol - 1] : "");
     const rowEmail = normalizeContactValue_(contactInfo.emailCol ? rowValues[contactInfo.emailCol - 1] : "");
+
+    if (useNameOnlyMatch) {
+      if (normalizedName && rowName && normalizedName === rowName) return headerRow + 1 + i;
+      continue;
+    }
 
     if (normalizedEmail && rowEmail && normalizedEmail === rowEmail) return headerRow + 1 + i;
     if (normalizedPhone && rowPhone && normalizedPhone === rowPhone) return headerRow + 1 + i;
@@ -549,6 +555,26 @@ function createQuote() {
 
     addStatus_(statusLog, "Quote setup", true, `Booking ${bookingId} for ${renterName}.`);
 
+    const waitingBookingIdCol = getColumnByHeader_(waitingSheet, 1, "Booking ID");
+    if (waitingBookingIdCol) {
+      const waitingLastRow = waitingSheet.getLastRow();
+      if (waitingLastRow > 1) {
+        const waitingBookingIds = waitingSheet.getRange(2, waitingBookingIdCol, waitingLastRow - 1, 1).getDisplayValues();
+        const duplicateBooking = waitingBookingIds.some(row => String(row[0] || "").trim() === bookingId);
+
+        if (duplicateBooking) {
+          addStatus_(
+            statusLog,
+            "Quote setup",
+            false,
+            `A Booking ID for ${renterName} already exists. Cancel existing quote before creating a new one with the same Booking ID`
+          );
+          showStatusLog_("Create Quote Status", statusLog);
+          return;
+        }
+      }
+    }
+
     // STEP 2: Copy TemplateRentalAgreement-2026 doc
     const templateFile = getDriveFileByIdOrName_(QUOTE_TEMPLATE_DOC_ID, QUOTE_TEMPLATE_DOC_NAME);
     if (!templateFile) {
@@ -598,28 +624,6 @@ function createQuote() {
       } catch (e) {
         addStatus_(statusLog, "Draft email", false, e.toString());
       }
-    }
-
-    // STEP 3C: Insert renter into Contacts sheet
-    try {
-      const contactInsert = insertContactRow_(renterName, renterPhone, renterEmail);
-      if (contactInsert.wasAdded) {
-        addStatus_(
-          statusLog,
-          "Contacts",
-          true,
-          `Inserted renter into '${CONTACTS_SHEET_NAME}' row ${contactInsert.row} with Year Added ${contactInsert.yearAdded}.`
-        );
-      } else {
-        addStatus_(
-          statusLog,
-          "Contacts",
-          true,
-          `Renter already found in '${CONTACTS_SHEET_NAME}' row ${contactInsert.row}.`
-        );
-      }
-    } catch (e) {
-      addStatus_(statusLog, "Contacts", false, e.toString());
     }
 
     // STEP 3C: Insert renter into Contacts sheet
