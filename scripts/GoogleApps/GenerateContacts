@@ -13,6 +13,13 @@ const GOOGLE_CONTACTS_SOURCE_SHEET_NAME = "Sheet2";
 const CONTACTS_MASTER_SHEET_NAME = "Contacts";
 const CONTACTS_BOOKINGS_SHEET_NAME = "Bookings";
 const CONTACTS_BOOKINGS_HEADER_SCAN_ROWS = 10;
+const CONTACTS_CONTROL_ROW = 1;
+const CONTACTS_HEADER_ROW = 2;
+const CONTACTS_FIRST_DATA_ROW = 3;
+const CONTACTS_SELECT_COLUMN = 1;
+const CONTACTS_EMAIL_SUBJECT_RANGE_NAME = "emailSubject";
+const CONTACTS_EMAIL_DRAFT_SUBJECT = "Happy Hooker Rentals";
+const HHR_EMAIL_ADDRESS = "happyhookerrentals@gmail.com";
 const CONTACTS_GROUP_NAME = "all campers";
 const CONTACTS_NAME_HEADERS = ["Renter", "Renter Name"];
 const CONTACTS_PHONE_HEADERS = ["Renter phone", "Phone"];
@@ -53,6 +60,24 @@ function GenerateContacts() {
   showGenerateContactsStatus_("Generate Contacts Status", statusLog);
 }
 
+function addGenerateContactsMenu_() {
+  try {
+    SpreadsheetApp.getUi()
+      .createMenu("Happy Hooker Rentals")
+      .addItem("Create Email", "createSelectedContactsEmail")
+      .addItem("Import CustomerList", "ImportCustomerListToContacts")
+      .addItem("Import Google Contacts", "ImportGoogleContactsToContacts")
+      .addItem("Generate Contacts", "GenerateContacts")
+      .addToUi();
+  } catch (e) {
+    Logger.log("Could not create GenerateContacts menu: " + e);
+  }
+}
+
+function onOpen() {
+  addGenerateContactsMenu_();
+}
+
 function ImportCustomerListToContacts() {
   const statusLog = [];
 
@@ -80,7 +105,7 @@ function ImportCustomerListToContacts() {
       );
     }
 
-    const contactsHeaders = contactsSheet.getRange(1, 1, 1, contactsSheet.getLastColumn()).getDisplayValues()[0];
+    const contactsHeaders = contactsSheet.getRange(CONTACTS_HEADER_ROW, 1, 1, contactsSheet.getLastColumn()).getDisplayValues()[0];
     const contactsNameCol = findHeaderColumnInRow_(contactsHeaders, ["Renter Name"]);
     if (!contactsNameCol) {
       throw new Error(`Sheet '${CONTACTS_MASTER_SHEET_NAME}' must contain a 'Renter Name' column.`);
@@ -114,7 +139,7 @@ function ImportCustomerListToContacts() {
         return;
       }
 
-      const existingRow = findExistingContactsSheetRowByName_(contactsSheet, 1, renterName);
+      const existingRow = findExistingContactsSheetRowByName_(contactsSheet, CONTACTS_HEADER_ROW, renterName);
       if (existingRow) {
         existingCount++;
         return;
@@ -171,7 +196,7 @@ function ImportGoogleContactsToContacts() {
       throw new Error(`Sheet '${GOOGLE_CONTACTS_SOURCE_SHEET_NAME}' must contain 'E-mail 1 - Value'.`);
     }
 
-    const contactsHeaders = contactsSheet.getRange(1, 1, 1, contactsSheet.getLastColumn()).getDisplayValues()[0];
+    const contactsHeaders = contactsSheet.getRange(CONTACTS_HEADER_ROW, 1, 1, contactsSheet.getLastColumn()).getDisplayValues()[0];
     const sourceLastRow = sourceSheet.getLastRow();
     if (sourceLastRow <= 1) {
       addGenerateContactsStatus_(statusLog, "Google Contacts import", true, `No data rows found in '${GOOGLE_CONTACTS_SOURCE_SHEET_NAME}'.`);
@@ -196,7 +221,7 @@ function ImportGoogleContactsToContacts() {
         return;
       }
 
-      const existingRow = findExistingContactsSheetRowByName_(contactsSheet, 1, renterName);
+      const existingRow = findExistingContactsSheetRowByName_(contactsSheet, CONTACTS_HEADER_ROW, renterName);
       if (existingRow) {
         existingCount++;
         return;
@@ -614,6 +639,10 @@ function findExactCell_(sheet, text) {
   return sheet.createTextFinder(text).matchEntireCell(true).findNext();
 }
 
+function buildCheckboxRule_() {
+  return SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build();
+}
+
 function findHeaderColumnInRow_(headers, possibleHeaders) {
   const normalizedPossible = possibleHeaders.map(normalizeHeader_);
 
@@ -713,7 +742,116 @@ function insertContactsSheetRow_(sheet, headers, renterName, renterPhone, renter
   });
 
   sheet.getRange(insertRow, 1, 1, rowValues.length).setValues([rowValues]);
+  sheet.getRange(insertRow, CONTACTS_SELECT_COLUMN).setDataValidation(buildCheckboxRule_()).setValue(false);
   return insertRow;
+}
+
+function getPreferredDraftFromAddress_() {
+  const activeEmail = Session.getActiveUser().getEmail();
+  if (String(activeEmail || "").toLowerCase() === HHR_EMAIL_ADDRESS.toLowerCase()) {
+    return HHR_EMAIL_ADDRESS;
+  }
+
+  const aliases = GmailApp.getAliases().map(alias => String(alias || "").toLowerCase());
+  if (aliases.includes(HHR_EMAIL_ADDRESS.toLowerCase())) {
+    return HHR_EMAIL_ADDRESS;
+  }
+
+  return "";
+}
+
+function createSelectedContactsEmail() {
+  const spreadsheet = SpreadsheetApp.openById(CONTACTS_DESTINATION_SPREADSHEET_ID);
+  const contactsSheet = spreadsheet.getSheetByName(CONTACTS_MASTER_SHEET_NAME);
+
+  if (!contactsSheet) {
+    SpreadsheetApp.getUi().alert("Create Email", `Sheet '${CONTACTS_MASTER_SHEET_NAME}' not found.`, SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const nextCell = findExactCell_(contactsSheet, "{{next}}");
+  if (!nextCell) {
+    SpreadsheetApp.getUi().alert("Create Email", `Cannot find {{next}} placeholder in '${CONTACTS_MASTER_SHEET_NAME}'.`, SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const headers = contactsSheet.getRange(CONTACTS_HEADER_ROW, 1, 1, contactsSheet.getLastColumn()).getDisplayValues()[0];
+  const emailCol = findHeaderColumnInRow_(headers, ["Renter Email"]);
+  if (!emailCol) {
+    SpreadsheetApp.getUi().alert("Create Email", `Column 'Renter Email' not found in '${CONTACTS_MASTER_SHEET_NAME}'.`, SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const dataRowCount = nextCell.getRow() - CONTACTS_FIRST_DATA_ROW;
+  if (dataRowCount <= 0) {
+    SpreadsheetApp.getUi().alert("Create Email", `No renter rows found in '${CONTACTS_MASTER_SHEET_NAME}'.`, SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const values = contactsSheet.getRange(CONTACTS_FIRST_DATA_ROW, 1, dataRowCount, contactsSheet.getLastColumn()).getDisplayValues();
+  const selectedEmails = [];
+  const seenEmails = {};
+  let selectedCount = 0;
+
+  values.forEach(rowValues => {
+    const isSelected = String(rowValues[CONTACTS_SELECT_COLUMN - 1] || "").toUpperCase() === "TRUE";
+    if (!isSelected) return;
+
+    selectedCount++;
+    const renterEmail = String(rowValues[emailCol - 1] || "").trim();
+    if (!renterEmail) return;
+
+    const normalizedEmail = renterEmail.toLowerCase();
+    if (seenEmails[normalizedEmail]) return;
+    seenEmails[normalizedEmail] = true;
+    selectedEmails.push(renterEmail);
+  });
+
+  if (!selectedCount) {
+    SpreadsheetApp.getUi().alert("Create Email", "No renters are selected.", SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  if (!selectedEmails.length) {
+    contactsSheet.getRange(CONTACTS_FIRST_DATA_ROW, CONTACTS_SELECT_COLUMN, dataRowCount, 1)
+      .setValues(Array.from({ length: dataRowCount }, () => [false]));
+    contactsSheet.getRange(CONTACTS_CONTROL_ROW, CONTACTS_SELECT_COLUMN).setValue(false);
+    SpreadsheetApp.getUi().alert("Create Email", "Selected renters did not have any email addresses.", SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const draftFrom = getPreferredDraftFromAddress_();
+  const draftTo = draftFrom || Session.getActiveUser().getEmail();
+  const subjectRange = spreadsheet.getRangeByName(CONTACTS_EMAIL_SUBJECT_RANGE_NAME);
+  const draftSubject = subjectRange
+    ? String(subjectRange.getDisplayValue() || "").trim() || CONTACTS_EMAIL_DRAFT_SUBJECT
+    : CONTACTS_EMAIL_DRAFT_SUBJECT;
+  const options = {
+    bcc: selectedEmails.join(","),
+    name: "Happy Hooker Rentals",
+    replyTo: HHR_EMAIL_ADDRESS
+  };
+
+  if (draftFrom) {
+    options.from = draftFrom;
+  }
+
+  GmailApp.createDraft(
+    draftTo,
+    draftSubject,
+    "",
+    options
+  );
+
+  contactsSheet.getRange(CONTACTS_FIRST_DATA_ROW, CONTACTS_SELECT_COLUMN, dataRowCount, 1)
+    .setValues(Array.from({ length: dataRowCount }, () => [false]));
+  contactsSheet.getRange(CONTACTS_CONTROL_ROW, CONTACTS_SELECT_COLUMN).setValue(false);
+
+  SpreadsheetApp.getUi().alert(
+    "Create Email",
+    `A draft email is created in ${draftTo} to ${selectedEmails.length} recipients that were selected.`,
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
 }
 
 function syncContactsToGoogleContacts_(contacts, statusLog) {
