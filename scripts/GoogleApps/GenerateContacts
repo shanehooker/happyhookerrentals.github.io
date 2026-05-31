@@ -1,0 +1,688 @@
+/**
+ * GenerateContacts
+ *
+ * Scans rental spreadsheets and rental agreement docs, compiles renter contacts,
+ * and writes a dated contacts tab into the destination spreadsheet.
+ */
+
+const CONTACTS_BOOKING_FOLDER_ID = "1tF7OiUGS9c4Ebr5oeaeELcZMz4jpIlRh";
+const CONTACTS_AGREEMENT_ROOT_FOLDER_ID = "1koKnYwhSzl_HQuB33WAI5JrN4R_AqDmG";
+const CONTACTS_DESTINATION_SPREADSHEET_ID = "1GVOBCWJyu-61WxOjqkPDQg5jDE6RNtr4SmwVgMimxas";
+const CONTACTS_BOOKINGS_SHEET_NAME = "Bookings";
+const CONTACTS_BOOKINGS_HEADER_SCAN_ROWS = 10;
+const CONTACTS_GROUP_NAME = "all campers";
+const CONTACTS_NAME_HEADERS = ["Renter", "Renter Name"];
+const CONTACTS_PHONE_HEADERS = ["Renter phone", "Phone"];
+const CONTACTS_EMAIL_HEADERS = ["Renter email", "Email"];
+
+function GenerateContacts() {
+  const statusLog = [];
+
+  try {
+    const renters = {};
+
+    const spreadsheetContacts = collectContactsFromBookingFolder_(statusLog);
+    addContactsToMap_(renters, spreadsheetContacts);
+
+    const agreementContacts = collectContactsFromAgreementFolders_(statusLog);
+    addContactsToMap_(renters, agreementContacts);
+
+    const contacts = Object.keys(renters)
+      .map(key => renters[key])
+      .sort((a, b) => {
+        const nameCompare = String(a.renterName || "").localeCompare(String(b.renterName || ""));
+        if (nameCompare !== 0) return nameCompare;
+        return String(a.renterEmail || "").localeCompare(String(b.renterEmail || ""));
+      });
+
+    const tabName = writeContactsSheet_(contacts, statusLog);
+    addGenerateContactsStatus_(statusLog, "Output sheet", true, `Created '${tabName}' with ${contacts.length} unique contact(s).`);
+    syncContactsToGoogleContacts_(contacts, statusLog);
+  } catch (e) {
+    addGenerateContactsStatus_(statusLog, "GenerateContacts", false, e.toString());
+  }
+
+  showGenerateContactsStatus_("Generate Contacts Status", statusLog);
+}
+
+function collectContactsFromBookingFolder_(statusLog) {
+  const folder = DriveApp.getFolderById(CONTACTS_BOOKING_FOLDER_ID);
+  const files = folder.getFiles();
+  const contacts = [];
+  let scannedFiles = 0;
+  let matchedFiles = 0;
+
+  while (files.hasNext()) {
+    const file = files.next();
+    scannedFiles++;
+
+    if (!/^HHRentals/i.test(file.getName())) continue;
+    if (file.getMimeType() !== MimeType.GOOGLE_SHEETS) continue;
+
+    matchedFiles++;
+
+    try {
+      const spreadsheet = SpreadsheetApp.openById(file.getId());
+      const bookingsSheet = spreadsheet.getSheetByName(CONTACTS_BOOKINGS_SHEET_NAME);
+
+      if (!bookingsSheet) {
+        addGenerateContactsStatus_(statusLog, "Bookings scan", false, `Skipped '${file.getName()}': no '${CONTACTS_BOOKINGS_SHEET_NAME}' tab.`);
+        continue;
+      }
+
+      const fileContacts = extractContactsFromBookingsSheet_(bookingsSheet, file.getName());
+      contacts.push.apply(contacts, fileContacts);
+      addGenerateContactsStatus_(statusLog, "Bookings scan", true, `Found ${fileContacts.length} contact(s) in '${file.getName()}'.`);
+    } catch (e) {
+      addGenerateContactsStatus_(statusLog, "Bookings scan", false, `Failed '${file.getName()}': ${e}`);
+    }
+  }
+
+  addGenerateContactsStatus_(statusLog, "Bookings folder", true, `Scanned ${scannedFiles} file(s); matched ${matchedFiles} HHRentals sheet(s).`);
+  return contacts;
+}
+
+function extractContactsFromBookingsSheet_(sheet, sourceFileName) {
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 1 || lastCol < 1) return [];
+
+  const scanRows = Math.min(lastRow, CONTACTS_BOOKINGS_HEADER_SCAN_ROWS);
+  const scannedValues = sheet.getRange(1, 1, scanRows, lastCol).getDisplayValues();
+
+  let headerRow = 0;
+  let nameCol = 0;
+  let phoneCol = 0;
+  let emailCol = 0;
+
+  scannedValues.some((rowValues, index) => {
+    const testNameCol = findHeaderColumnInRow_(rowValues, CONTACTS_NAME_HEADERS);
+    const testPhoneCol = findHeaderColumnInRow_(rowValues, CONTACTS_PHONE_HEADERS);
+    const testEmailCol = findHeaderColumnInRow_(rowValues, CONTACTS_EMAIL_HEADERS);
+
+    if (testNameCol && testPhoneCol && testEmailCol) {
+      headerRow = index + 1;
+      nameCol = testNameCol;
+      phoneCol = testPhoneCol;
+      emailCol = testEmailCol;
+      return true;
+    }
+
+    return false;
+  });
+
+  if (!headerRow || lastRow <= headerRow) return [];
+
+  const rows = sheet.getRange(headerRow + 1, 1, lastRow - headerRow, lastCol).getDisplayValues();
+  const contacts = [];
+
+  rows.forEach((rowValues, index) => {
+    const renterName = String(rowValues[nameCol - 1] || "").trim();
+    const renterPhone = String(rowValues[phoneCol - 1] || "").trim();
+    const renterEmail = String(rowValues[emailCol - 1] || "").trim();
+
+    if (!renterName || !renterPhone || !renterEmail) return;
+
+    contacts.push({
+      renterName,
+      renterPhone,
+      renterEmail,
+      sourceType: "Bookings",
+      sourceFileName,
+      sourceSheetName: sheet.getName(),
+      sourceRow: headerRow + 1 + index
+    });
+  });
+
+  return contacts;
+}
+
+function collectContactsFromAgreementFolders_(statusLog) {
+  const rootFolder = DriveApp.getFolderById(CONTACTS_AGREEMENT_ROOT_FOLDER_ID);
+  const contacts = [];
+  const stats = {
+    folders: 0,
+    agreementFiles: 0
+  };
+
+  collectContactsFromFolderRecursive_(rootFolder, contacts, statusLog, stats);
+  addGenerateContactsStatus_(statusLog, "Agreement folders", true, `Scanned ${stats.folders} folder(s) and ${stats.agreementFiles} rental agreement file(s).`);
+  return contacts;
+}
+
+function collectContactsFromFolderRecursive_(folder, contacts, statusLog, stats) {
+  stats.folders++;
+
+  const files = folder.getFiles();
+  while (files.hasNext()) {
+    const file = files.next();
+    if (!/RentalAgreement/i.test(file.getName())) continue;
+
+    stats.agreementFiles++;
+
+    if (/template/i.test(file.getName())) {
+      addGenerateContactsStatus_(statusLog, "Agreement scan", true, `Skipped template '${file.getName()}'.`);
+      continue;
+    }
+
+    if (file.getMimeType() !== MimeType.GOOGLE_DOCS) {
+      addGenerateContactsStatus_(statusLog, "Agreement scan", true, `Skipped non-Google-Doc '${file.getName()}'.`);
+      continue;
+    }
+
+    try {
+      const contact = extractContactFromAgreementFile_(file, folder.getName());
+      if (contact) {
+        contacts.push(contact);
+        addGenerateContactsStatus_(statusLog, "Agreement scan", true, `Found contact in '${file.getName()}'.`);
+      } else {
+        addGenerateContactsStatus_(statusLog, "Agreement scan", false, `Skipped '${file.getName()}': missing renter name, phone, or email.`);
+      }
+    } catch (e) {
+      addGenerateContactsStatus_(statusLog, "Agreement scan", false, `Failed '${file.getName()}': ${e}`);
+    }
+  }
+
+  const subfolders = folder.getFolders();
+  while (subfolders.hasNext()) {
+    collectContactsFromFolderRecursive_(subfolders.next(), contacts, statusLog, stats);
+  }
+}
+
+function extractContactFromAgreementFile_(file, sourceFolderName) {
+  const fields = extractAgreementFieldsFromDocFile_(file);
+  const agreementText = getAgreementDocText_(file);
+  const patternMatches = extractContactPatternsFromText_(agreementText);
+
+  const renterName =
+    getAgreementFieldValue_(fields, CONTACTS_NAME_HEADERS.concat(["RenterName", "Name"])) ||
+    patternMatches.renterName;
+  const renterPhone =
+    getAgreementFieldValue_(fields, CONTACTS_PHONE_HEADERS.concat(["RenterPhone", "Phone Number"])) ||
+    patternMatches.renterPhone;
+  const renterEmail =
+    getAgreementFieldValue_(fields, CONTACTS_EMAIL_HEADERS.concat(["RenterEmail", "Email Address"])) ||
+    patternMatches.renterEmail;
+
+  if (!renterName || !renterPhone || !renterEmail) return null;
+
+  return {
+    renterName,
+    renterPhone,
+    renterEmail,
+    sourceType: "RentalAgreement",
+    sourceFileName: file.getName(),
+    sourceSheetName: sourceFolderName,
+    sourceRow: ""
+  };
+}
+
+function extractAgreementFieldsFromDocFile_(docFile) {
+  const doc = DocumentApp.openById(docFile.getId());
+  const body = doc.getBody();
+  const fields = {};
+
+  function saveField(label, value) {
+    const cleanLabel = normalizeAgreementFieldKey_(label);
+    const cleanValue = String(value || "").trim();
+    if (!cleanLabel || !cleanValue) return;
+    fields[cleanLabel] = cleanValue;
+  }
+
+  const tables = body.getTables();
+  tables.forEach(table => {
+    for (let r = 0; r < table.getNumRows(); r++) {
+      const row = table.getRow(r);
+      const cellTexts = [];
+
+      for (let c = 0; c < row.getNumCells(); c++) {
+        cellTexts.push(row.getCell(c).getText().trim());
+      }
+
+      if (cellTexts.length >= 2 && cellTexts[0]) {
+        const value = cellTexts.slice(1).find(text => text !== "");
+        if (value) saveField(cellTexts[0], value);
+      }
+
+      for (let c = 0; c < cellTexts.length - 1; c++) {
+        const label = cellTexts[c];
+        if (!label) continue;
+        const value = cellTexts.slice(c + 1).find(text => text !== "");
+        if (value) saveField(label, value);
+      }
+    }
+  });
+
+  const lines = body.getText().split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  lines.forEach((line, index) => {
+    const inlineMatch = line.match(/^(.+?)\s*:\s*(.+)$/);
+    if (inlineMatch) {
+      saveField(inlineMatch[1], inlineMatch[2]);
+      return;
+    }
+
+    const labelOnlyMatch = line.match(/^(.+?)\s*:\s*$/);
+    if (labelOnlyMatch && lines[index + 1]) {
+      saveField(labelOnlyMatch[1], lines[index + 1]);
+    }
+  });
+
+  return fields;
+}
+
+function getAgreementDocText_(docFile) {
+  const doc = DocumentApp.openById(docFile.getId());
+  return doc.getBody().getText();
+}
+
+function extractContactPatternsFromText_(text) {
+  const normalizedText = String(text || "").replace(/\r/g, "\n");
+  const lines = normalizedText
+    .split(/\n+/)
+    .map(line => String(line || "").trim())
+    .filter(Boolean);
+
+  const emailMatch = normalizedText.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i);
+  const phoneMatch = normalizedText.match(/\b\d{3}-\d{3}-\d{4}\b/);
+
+  const renterName = extractRenterNameFromContextLines_(lines, emailMatch, phoneMatch);
+
+  return {
+    renterName: renterName,
+    renterPhone: phoneMatch ? phoneMatch[0] : "",
+    renterEmail: emailMatch ? emailMatch[0] : ""
+  };
+}
+
+function extractRenterNameFromContextLines_(lines, emailMatch, phoneMatch) {
+  const contextLines = [];
+  const seenLines = {};
+
+  for (let i = 0; i < lines.length; i++) {
+    const lowerLine = String(lines[i] || "").toLowerCase();
+    if (/(renter|guest|customer|lessee|name)/.test(lowerLine)) {
+      addContextLine_(contextLines, seenLines, lines[i]);
+      if (lines[i + 1]) addContextLine_(contextLines, seenLines, lines[i + 1]);
+    }
+  }
+
+  addLinesNearMatch_(lines, emailMatch, contextLines, seenLines);
+  addLinesNearMatch_(lines, phoneMatch, contextLines, seenLines);
+
+  return findFirstLikelyPersonName_(contextLines);
+}
+
+function addLinesNearMatch_(lines, match, contextLines, seenLines) {
+  if (!match || !match[0]) return;
+
+  for (let i = 0; i < lines.length; i++) {
+    if (String(lines[i] || "").indexOf(match[0]) === -1) continue;
+
+    if (lines[i - 1]) addContextLine_(contextLines, seenLines, lines[i - 1]);
+    addContextLine_(contextLines, seenLines, lines[i]);
+    if (lines[i + 1]) addContextLine_(contextLines, seenLines, lines[i + 1]);
+  }
+}
+
+function addContextLine_(contextLines, seenLines, line) {
+  const cleanLine = String(line || "").trim();
+  if (!cleanLine || seenLines[cleanLine]) return;
+
+  seenLines[cleanLine] = true;
+  contextLines.push(cleanLine);
+}
+
+function findFirstLikelyPersonName_(lines) {
+  const nameRegex = /\b([A-Z][a-z]+(?:[-'][A-Z][a-z]+)? [A-Z][a-z]+(?:[-'][A-Z][a-z]+)?)\b/g;
+  const excludedNames = {
+    "Happy Hooker": true,
+    "Rental Agreement": true,
+    "Happy Campers": true,
+    "Coachmen Clipper": true,
+    "Glen Ellis": true
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = String(lines[i] || "");
+    let match;
+
+    while ((match = nameRegex.exec(line)) !== null) {
+      const candidate = String(match[1] || "").trim();
+      if (!candidate || excludedNames[candidate]) continue;
+      return candidate;
+    }
+  }
+
+  return "";
+}
+
+function getAgreementFieldValue_(fields, possibleNames) {
+  for (let i = 0; i < possibleNames.length; i++) {
+    const key = normalizeAgreementFieldKey_(possibleNames[i]);
+    if (fields[key]) return fields[key];
+  }
+
+  return "";
+}
+
+function normalizeAgreementFieldKey_(key) {
+  return String(key || "")
+    .replace(/[:]/g, "")
+    .replace(/\s+/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function addContactsToMap_(contactMap, contacts) {
+  contacts.forEach(contact => {
+    const key = buildContactKey_(contact);
+    if (!key) return;
+
+    if (!contactMap[key]) {
+      contactMap[key] = {
+        renterName: contact.renterName,
+        renterPhone: contact.renterPhone,
+        renterEmail: contact.renterEmail,
+        sourceTypes: [contact.sourceType],
+        sourceFiles: [contact.sourceFileName],
+        sourceLocations: [contact.sourceSheetName],
+        sourceRows: [contact.sourceRow]
+      };
+      return;
+    }
+
+    const existing = contactMap[key];
+    existing.renterName = existing.renterName || contact.renterName;
+    existing.renterPhone = existing.renterPhone || contact.renterPhone;
+    existing.renterEmail = existing.renterEmail || contact.renterEmail;
+
+    if (existing.sourceTypes.indexOf(contact.sourceType) === -1) existing.sourceTypes.push(contact.sourceType);
+    if (existing.sourceFiles.indexOf(contact.sourceFileName) === -1) existing.sourceFiles.push(contact.sourceFileName);
+    if (existing.sourceLocations.indexOf(contact.sourceSheetName) === -1) existing.sourceLocations.push(contact.sourceSheetName);
+    if (contact.sourceRow !== "" && existing.sourceRows.indexOf(contact.sourceRow) === -1) existing.sourceRows.push(contact.sourceRow);
+  });
+}
+
+function buildContactKey_(contact) {
+  const email = normalizeEmail_(contact.renterEmail);
+  if (email) return `email:${email}`;
+
+  const phone = normalizePhone_(contact.renterPhone);
+  if (phone) return `phone:${phone}`;
+
+  const name = normalizeName_(contact.renterName);
+  return name ? `name:${name}` : "";
+}
+
+function normalizeEmail_(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizePhone_(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function normalizeName_(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function normalizeHeader_(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function findHeaderColumnInRow_(headers, possibleHeaders) {
+  const normalizedPossible = possibleHeaders.map(normalizeHeader_);
+
+  for (let i = 0; i < headers.length; i++) {
+    const normalizedHeader = normalizeHeader_(headers[i]);
+    if (normalizedPossible.indexOf(normalizedHeader) !== -1) {
+      return i + 1;
+    }
+  }
+
+  return 0;
+}
+
+function writeContactsSheet_(contacts, statusLog) {
+  const destination = SpreadsheetApp.openById(CONTACTS_DESTINATION_SPREADSHEET_ID);
+  const tabName = `Contacts-${Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyyMMdd")}`;
+  const existingSheet = destination.getSheetByName(tabName);
+
+  if (existingSheet) {
+    destination.deleteSheet(existingSheet);
+    addGenerateContactsStatus_(statusLog, "Output sheet", true, `Replaced existing '${tabName}' tab.`);
+  }
+
+  const sheet = destination.insertSheet(tabName);
+  const headers = [[
+    "Renter Name",
+    "Renter Phone",
+    "Renter Email",
+    "Source Types",
+    "Source Files",
+    "Source Locations",
+    "Source Rows"
+  ]];
+
+  sheet.getRange(1, 1, 1, headers[0].length).setValues(headers);
+  sheet.getRange(1, 1, 1, headers[0].length).setFontWeight("bold");
+
+  if (contacts.length) {
+    const rows = contacts.map(contact => [
+      contact.renterName,
+      contact.renterPhone,
+      contact.renterEmail,
+      contact.sourceTypes.join(", "),
+      contact.sourceFiles.join(", "),
+      contact.sourceLocations.join(", "),
+      contact.sourceRows.join(", ")
+    ]);
+
+    sheet.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
+  }
+
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, headers[0].length);
+  return tabName;
+}
+
+function syncContactsToGoogleContacts_(contacts, statusLog) {
+  if (typeof People === "undefined") {
+    throw new Error("People API advanced service is not enabled. In Apps Script, enable Services > People API before running GenerateContacts again.");
+  }
+
+  const contactsIndex = getGoogleContactsIndex_();
+  const group = getContactGroupByName_(CONTACTS_GROUP_NAME);
+  const results = {
+    created: 0,
+    alreadyPresent: 0,
+    grouped: 0,
+    errors: 0
+  };
+
+  contacts.forEach(contactData => {
+    try {
+      let person = findIndexedGoogleContact_(contactsIndex, contactData);
+
+      if (!person) {
+        person = createGoogleContact_(contactData);
+        results.created++;
+      } else {
+        results.alreadyPresent++;
+      }
+
+      if (group && person.resourceName && !isPersonInGroup_(person, group.resourceName)) {
+        People.ContactGroups.Members.modify(
+          { resourceNamesToAdd: [person.resourceName] },
+          group.resourceName
+        );
+        results.grouped++;
+      }
+
+      addPersonToContactsIndex_(contactsIndex, person);
+    } catch (e) {
+      results.errors++;
+      Logger.log(`GenerateContacts sync error for '${contactData.renterEmail}': ${e}`);
+    }
+  });
+
+  addGenerateContactsStatus_(
+    statusLog,
+    "Google Contacts sync",
+    results.errors === 0,
+    `Created ${results.created}, already present ${results.alreadyPresent}, grouped ${results.grouped}, errors ${results.errors}.`
+  );
+
+  if (group) {
+    addGenerateContactsStatus_(statusLog, "Google Contacts group", true, `Used contact group '${CONTACTS_GROUP_NAME}'.`);
+  } else {
+    addGenerateContactsStatus_(statusLog, "Google Contacts group", false, `Contact group '${CONTACTS_GROUP_NAME}' was not found.`);
+  }
+}
+
+function getGoogleContactsIndex_() {
+  const index = {
+    byEmail: {},
+    byPhone: {},
+    byName: {}
+  };
+  let pageToken;
+
+  do {
+    const response = People.People.Connections.list("people/me", {
+      personFields: "names,emailAddresses,phoneNumbers,memberships",
+      pageSize: 1000,
+      pageToken: pageToken
+    });
+    const connections = response.connections || [];
+    connections.forEach(person => addPersonToContactsIndex_(index, person));
+    pageToken = response.nextPageToken;
+  } while (pageToken);
+
+  return index;
+}
+
+function addPersonToContactsIndex_(index, person) {
+  if (!person || !person.resourceName) return;
+
+  getPersonEmailAddresses_(person).forEach(email => {
+    const normalized = normalizeEmail_(email);
+    if (normalized && !index.byEmail[normalized]) index.byEmail[normalized] = person;
+  });
+
+  getPersonPhoneNumbers_(person).forEach(phone => {
+    const normalized = normalizePhone_(phone);
+    if (normalized && !index.byPhone[normalized]) index.byPhone[normalized] = person;
+  });
+
+  getPersonDisplayNames_(person).forEach(name => {
+    const normalized = normalizeName_(name);
+    if (normalized && !index.byName[normalized]) index.byName[normalized] = person;
+  });
+}
+
+function findIndexedGoogleContact_(index, contactData) {
+  const email = normalizeEmail_(contactData.renterEmail);
+  if (email && index.byEmail[email]) return index.byEmail[email];
+
+  const phone = normalizePhone_(contactData.renterPhone);
+  if (phone && index.byPhone[phone]) return index.byPhone[phone];
+
+  const name = normalizeName_(contactData.renterName);
+  if (name && index.byName[name]) return index.byName[name];
+
+  return null;
+}
+
+function createGoogleContact_(contactData) {
+  const nameParts = splitContactName_(contactData.renterName);
+  const person = {
+    names: [{
+      givenName: nameParts.givenName,
+      familyName: nameParts.familyName,
+      displayName: contactData.renterName
+    }]
+  };
+
+  if (contactData.renterEmail) {
+    person.emailAddresses = [{ value: contactData.renterEmail }];
+  }
+
+  if (contactData.renterPhone) {
+    person.phoneNumbers = [{ value: contactData.renterPhone }];
+  }
+
+  return People.People.createContact(person);
+}
+
+function getContactGroupByName_(name) {
+  if (!name) return null;
+
+  let pageToken;
+  do {
+    const response = People.ContactGroups.list({
+      pageSize: 1000,
+      pageToken: pageToken,
+      groupFields: "name,memberCount,metadata"
+    });
+    const groups = response.contactGroups || [];
+    const match = groups.find(group => String(group.name || "").trim().toLowerCase() === String(name).trim().toLowerCase());
+    if (match) return match;
+    pageToken = response.nextPageToken;
+  } while (pageToken);
+
+  return null;
+}
+
+function isPersonInGroup_(person, groupResourceName) {
+  const memberships = person.memberships || [];
+  return memberships.some(membership => {
+    return membership.contactGroupMembership &&
+      membership.contactGroupMembership.contactGroupResourceName === groupResourceName;
+  });
+}
+
+function getPersonEmailAddresses_(person) {
+  return (person.emailAddresses || []).map(email => String(email.value || "").trim()).filter(Boolean);
+}
+
+function getPersonPhoneNumbers_(person) {
+  return (person.phoneNumbers || []).map(phone => String(phone.value || "").trim()).filter(Boolean);
+}
+
+function getPersonDisplayNames_(person) {
+  return (person.names || [])
+    .map(name => String(name.displayName || name.unstructuredName || "").trim())
+    .filter(Boolean);
+}
+
+function splitContactName_(fullName) {
+  const trimmed = String(fullName || "").trim();
+  if (!trimmed) {
+    return {
+      givenName: "Unknown",
+      familyName: "Customer"
+    };
+  }
+
+  const parts = trimmed.split(/\s+/);
+  return {
+    givenName: parts.shift() || trimmed,
+    familyName: parts.join(" ") || "."
+  };
+}
+
+function addGenerateContactsStatus_(statusLog, step, success, detail) {
+  const message = `${success ? "OK" : "WARN"} ${step}: ${detail}`;
+  statusLog.push(message);
+  Logger.log(`${success ? "SUCCESS" : "WARNING"} - ${step}: ${detail}`);
+}
+
+function showGenerateContactsStatus_(title, statusLog) {
+  const message = statusLog && statusLog.length ? statusLog.join("\n") : "No status messages were recorded.";
+  try {
+    SpreadsheetApp.getUi().alert(title, message, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch (e) {
+    Logger.log(`${title}: ${message}`);
+  }
+}
