@@ -8,12 +8,20 @@
 const CONTACTS_BOOKING_FOLDER_ID = "1tF7OiUGS9c4Ebr5oeaeELcZMz4jpIlRh";
 const CONTACTS_AGREEMENT_ROOT_FOLDER_ID = "1koKnYwhSzl_HQuB33WAI5JrN4R_AqDmG";
 const CONTACTS_DESTINATION_SPREADSHEET_ID = "1GVOBCWJyu-61WxOjqkPDQg5jDE6RNtr4SmwVgMimxas";
+const CUSTOMER_LIST_SHEET_NAME = "Sheet1";
+const GOOGLE_CONTACTS_SOURCE_SHEET_NAME = "Sheet2";
+const CONTACTS_MASTER_SHEET_NAME = "Contacts";
 const CONTACTS_BOOKINGS_SHEET_NAME = "Bookings";
 const CONTACTS_BOOKINGS_HEADER_SCAN_ROWS = 10;
 const CONTACTS_GROUP_NAME = "all campers";
 const CONTACTS_NAME_HEADERS = ["Renter", "Renter Name"];
 const CONTACTS_PHONE_HEADERS = ["Renter phone", "Phone"];
 const CONTACTS_EMAIL_HEADERS = ["Renter email", "Email"];
+const CONTACTS_NOTES_HEADERS = ["Notes"];
+const GOOGLE_CONTACTS_FIRST_NAME_HEADERS = ["First Name"];
+const GOOGLE_CONTACTS_LAST_NAME_HEADERS = ["Last Name"];
+const GOOGLE_CONTACTS_EMAIL_HEADERS = ["E-mail 1 - Value"];
+const GOOGLE_CONTACTS_PHONE_HEADERS = ["Phone 1 - Value"];
 
 function GenerateContacts() {
   const statusLog = [];
@@ -43,6 +51,178 @@ function GenerateContacts() {
   }
 
   showGenerateContactsStatus_("Generate Contacts Status", statusLog);
+}
+
+function ImportCustomerListToContacts() {
+  const statusLog = [];
+
+  try {
+    const spreadsheet = SpreadsheetApp.openById(CONTACTS_DESTINATION_SPREADSHEET_ID);
+    const customerListSheet = spreadsheet.getSheetByName(CUSTOMER_LIST_SHEET_NAME);
+    const contactsSheet = spreadsheet.getSheetByName(CONTACTS_MASTER_SHEET_NAME);
+
+    if (!customerListSheet) {
+      throw new Error(`Sheet '${CUSTOMER_LIST_SHEET_NAME}' not found.`);
+    }
+    if (!contactsSheet) {
+      throw new Error(`Sheet '${CONTACTS_MASTER_SHEET_NAME}' not found.`);
+    }
+
+    const customerHeaders = customerListSheet.getRange(1, 1, 1, customerListSheet.getLastColumn()).getDisplayValues()[0];
+    const customerNameCol = findHeaderColumnInRow_(customerHeaders, CONTACTS_NAME_HEADERS);
+    const customerPhoneCol = findHeaderColumnInRow_(customerHeaders, CONTACTS_PHONE_HEADERS);
+    const customerEmailCol = findHeaderColumnInRow_(customerHeaders, CONTACTS_EMAIL_HEADERS);
+    const customerNotesCol = findHeaderColumnInRow_(customerHeaders, CONTACTS_NOTES_HEADERS);
+
+    if (!customerNameCol || !customerPhoneCol || !customerEmailCol || !customerNotesCol) {
+      throw new Error(
+        `Sheet '${CUSTOMER_LIST_SHEET_NAME}' must contain Renter Name, Renter Phone, Renter Email, and Notes columns.`
+      );
+    }
+
+    const contactsHeaders = contactsSheet.getRange(1, 1, 1, contactsSheet.getLastColumn()).getDisplayValues()[0];
+    const contactsNameCol = findHeaderColumnInRow_(contactsHeaders, ["Renter Name"]);
+    if (!contactsNameCol) {
+      throw new Error(`Sheet '${CONTACTS_MASTER_SHEET_NAME}' must contain a 'Renter Name' column.`);
+    }
+
+    const nextCell = findExactCell_(contactsSheet, "{{next}}");
+    if (!nextCell) {
+      throw new Error(`Cannot find {{next}} placeholder in '${CONTACTS_MASTER_SHEET_NAME}'.`);
+    }
+
+    const customerLastRow = customerListSheet.getLastRow();
+    if (customerLastRow <= 1) {
+      addGenerateContactsStatus_(statusLog, "CustomerList import", true, `No data rows found in '${CUSTOMER_LIST_SHEET_NAME}'.`);
+      showGenerateContactsStatus_("CustomerList Import Status", statusLog);
+      return;
+    }
+
+    const customerRows = customerListSheet.getRange(2, 1, customerLastRow - 1, customerListSheet.getLastColumn()).getDisplayValues();
+    let insertedCount = 0;
+    let existingCount = 0;
+    let skippedCount = 0;
+
+    customerRows.forEach((rowValues, index) => {
+      const renterName = String(rowValues[customerNameCol - 1] || "").trim();
+      const renterPhone = String(rowValues[customerPhoneCol - 1] || "").trim();
+      const renterEmail = String(rowValues[customerEmailCol - 1] || "").trim();
+      const notes = String(rowValues[customerNotesCol - 1] || "").trim();
+
+      if (!renterName) {
+        skippedCount++;
+        return;
+      }
+
+      const existingRow = findExistingContactsSheetRowByName_(contactsSheet, 1, renterName);
+      if (existingRow) {
+        existingCount++;
+        return;
+      }
+
+      const insertedRow = insertContactsSheetRow_(contactsSheet, contactsHeaders, renterName, renterPhone, renterEmail, notes);
+      insertedCount++;
+      addGenerateContactsStatus_(
+        statusLog,
+        "CustomerList row",
+        true,
+        `Inserted '${renterName}' into '${CONTACTS_MASTER_SHEET_NAME}' row ${insertedRow} from '${CUSTOMER_LIST_SHEET_NAME}' row ${index + 2}.`
+      );
+    });
+
+    addGenerateContactsStatus_(
+      statusLog,
+      "CustomerList import",
+      true,
+      `Inserted ${insertedCount}, already existed ${existingCount}, skipped ${skippedCount}.`
+    );
+  } catch (e) {
+    addGenerateContactsStatus_(statusLog, "CustomerList import", false, e.toString());
+  }
+
+  showGenerateContactsStatus_("CustomerList Import Status", statusLog);
+}
+
+function ImportGoogleContactsToContacts() {
+  const statusLog = [];
+
+  try {
+    const spreadsheet = SpreadsheetApp.openById(CONTACTS_DESTINATION_SPREADSHEET_ID);
+    const sourceSheet = spreadsheet.getSheetByName(GOOGLE_CONTACTS_SOURCE_SHEET_NAME);
+    const contactsSheet = spreadsheet.getSheetByName(CONTACTS_MASTER_SHEET_NAME);
+
+    if (!sourceSheet) {
+      throw new Error(`Sheet '${GOOGLE_CONTACTS_SOURCE_SHEET_NAME}' not found.`);
+    }
+    if (!contactsSheet) {
+      throw new Error(`Sheet '${CONTACTS_MASTER_SHEET_NAME}' not found.`);
+    }
+
+    const sourceHeaders = sourceSheet.getRange(1, 1, 1, sourceSheet.getLastColumn()).getDisplayValues()[0];
+    const firstNameCol = findHeaderColumnInRow_(sourceHeaders, GOOGLE_CONTACTS_FIRST_NAME_HEADERS);
+    const lastNameCol = findHeaderColumnInRow_(sourceHeaders, GOOGLE_CONTACTS_LAST_NAME_HEADERS);
+    const emailCol = findHeaderColumnInRow_(sourceHeaders, GOOGLE_CONTACTS_EMAIL_HEADERS);
+    const phoneCol = findHeaderColumnInRow_(sourceHeaders, GOOGLE_CONTACTS_PHONE_HEADERS);
+
+    if (!firstNameCol && !lastNameCol) {
+      throw new Error(`Sheet '${GOOGLE_CONTACTS_SOURCE_SHEET_NAME}' must contain First Name and/or Last Name columns.`);
+    }
+    if (!emailCol) {
+      throw new Error(`Sheet '${GOOGLE_CONTACTS_SOURCE_SHEET_NAME}' must contain 'E-mail 1 - Value'.`);
+    }
+
+    const contactsHeaders = contactsSheet.getRange(1, 1, 1, contactsSheet.getLastColumn()).getDisplayValues()[0];
+    const sourceLastRow = sourceSheet.getLastRow();
+    if (sourceLastRow <= 1) {
+      addGenerateContactsStatus_(statusLog, "Google Contacts import", true, `No data rows found in '${GOOGLE_CONTACTS_SOURCE_SHEET_NAME}'.`);
+      showGenerateContactsStatus_("Google Contacts Import Status", statusLog);
+      return;
+    }
+
+    const sourceRows = sourceSheet.getRange(2, 1, sourceLastRow - 1, sourceSheet.getLastColumn()).getDisplayValues();
+    let insertedCount = 0;
+    let existingCount = 0;
+    let skippedCount = 0;
+
+    sourceRows.forEach((rowValues, index) => {
+      const firstName = String(firstNameCol ? rowValues[firstNameCol - 1] || "" : "").trim();
+      const lastName = String(lastNameCol ? rowValues[lastNameCol - 1] || "" : "").trim();
+      const renterName = [firstName, lastName].filter(Boolean).join(" ").trim();
+      const renterEmail = String(rowValues[emailCol - 1] || "").trim();
+      const renterPhone = String(phoneCol ? rowValues[phoneCol - 1] || "" : "").trim();
+
+      if (!renterName) {
+        skippedCount++;
+        return;
+      }
+
+      const existingRow = findExistingContactsSheetRowByName_(contactsSheet, 1, renterName);
+      if (existingRow) {
+        existingCount++;
+        return;
+      }
+
+      const insertedRow = insertContactsSheetRow_(contactsSheet, contactsHeaders, renterName, renterPhone, renterEmail, "");
+      insertedCount++;
+      addGenerateContactsStatus_(
+        statusLog,
+        "Google Contacts row",
+        true,
+        `Inserted '${renterName}' into '${CONTACTS_MASTER_SHEET_NAME}' row ${insertedRow} from '${GOOGLE_CONTACTS_SOURCE_SHEET_NAME}' row ${index + 2}.`
+      );
+    });
+
+    addGenerateContactsStatus_(
+      statusLog,
+      "Google Contacts import",
+      true,
+      `Inserted ${insertedCount}, already existed ${existingCount}, skipped ${skippedCount}.`
+    );
+  } catch (e) {
+    addGenerateContactsStatus_(statusLog, "Google Contacts import", false, e.toString());
+  }
+
+  showGenerateContactsStatus_("Google Contacts Import Status", statusLog);
 }
 
 function collectContactsFromBookingFolder_(statusLog) {
@@ -430,6 +610,10 @@ function normalizeHeader_(value) {
   return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+function findExactCell_(sheet, text) {
+  return sheet.createTextFinder(text).matchEntireCell(true).findNext();
+}
+
 function findHeaderColumnInRow_(headers, possibleHeaders) {
   const normalizedPossible = possibleHeaders.map(normalizeHeader_);
 
@@ -484,6 +668,52 @@ function writeContactsSheet_(contacts, statusLog) {
   sheet.setFrozenRows(1);
   sheet.autoResizeColumns(1, headers[0].length);
   return tabName;
+}
+
+function findExistingContactsSheetRowByName_(sheet, headerRow, renterName) {
+  const nextCell = findExactCell_(sheet, "{{next}}");
+  if (!nextCell) return 0;
+
+  const lastDataRow = nextCell.getRow() - 1;
+  if (lastDataRow <= headerRow) return 0;
+
+  const headers = sheet.getRange(headerRow, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  const nameCol = findHeaderColumnInRow_(headers, ["Renter Name"]);
+  if (!nameCol) return 0;
+
+  const values = sheet.getRange(headerRow + 1, 1, lastDataRow - headerRow, sheet.getLastColumn()).getDisplayValues();
+  const normalizedTargetName = normalizeName_(renterName);
+
+  for (let i = 0; i < values.length; i++) {
+    const rowName = normalizeName_(values[i][nameCol - 1]);
+    if (normalizedTargetName && rowName === normalizedTargetName) {
+      return headerRow + 1 + i;
+    }
+  }
+
+  return 0;
+}
+
+function insertContactsSheetRow_(sheet, headers, renterName, renterPhone, renterEmail, notes) {
+  const nextCell = findExactCell_(sheet, "{{next}}");
+  if (!nextCell) {
+    throw new Error(`Cannot find {{next}} placeholder in '${sheet.getName()}'.`);
+  }
+
+  const insertRow = nextCell.getRow();
+  sheet.insertRowBefore(insertRow);
+
+  const rowValues = headers.map(header => {
+    const cleanHeader = String(header || "").trim();
+    if (cleanHeader === "Renter Name") return renterName || "";
+    if (cleanHeader === "Renter Phone") return renterPhone || "";
+    if (cleanHeader === "Renter Email") return renterEmail || "";
+    if (cleanHeader === "Notes") return notes || "";
+    return "";
+  });
+
+  sheet.getRange(insertRow, 1, 1, rowValues.length).setValues([rowValues]);
+  return insertRow;
 }
 
 function syncContactsToGoogleContacts_(contacts, statusLog) {
