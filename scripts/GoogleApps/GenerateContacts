@@ -285,31 +285,75 @@ function extractContactPatternsFromText_(text) {
   const emailMatch = normalizedText.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i);
   const phoneMatch = normalizedText.match(/\b\d{3}-\d{3}-\d{4}\b/);
 
-  let renterName = "";
-  const nameRegex = /\b([A-Z][a-z]+ [A-Z][a-z]+)\b/g;
-  const excludedNames = {
-    "Happy Hooker": true,
-    "Rental Agreement": true,
-    "Happy Campers": true
-  };
-
-  for (let i = 0; i < lines.length && !renterName; i++) {
-    const line = lines[i];
-    let match;
-
-    while ((match = nameRegex.exec(line)) !== null) {
-      const candidate = String(match[1] || "").trim();
-      if (!candidate || excludedNames[candidate]) continue;
-      renterName = candidate;
-      break;
-    }
-  }
+  const renterName = extractRenterNameFromContextLines_(lines, emailMatch, phoneMatch);
 
   return {
     renterName: renterName,
     renterPhone: phoneMatch ? phoneMatch[0] : "",
     renterEmail: emailMatch ? emailMatch[0] : ""
   };
+}
+
+function extractRenterNameFromContextLines_(lines, emailMatch, phoneMatch) {
+  const contextLines = [];
+  const seenLines = {};
+
+  for (let i = 0; i < lines.length; i++) {
+    const lowerLine = String(lines[i] || "").toLowerCase();
+    if (/(renter|guest|customer|lessee|name)/.test(lowerLine)) {
+      addContextLine_(contextLines, seenLines, lines[i]);
+      if (lines[i + 1]) addContextLine_(contextLines, seenLines, lines[i + 1]);
+    }
+  }
+
+  addLinesNearMatch_(lines, emailMatch, contextLines, seenLines);
+  addLinesNearMatch_(lines, phoneMatch, contextLines, seenLines);
+
+  return findFirstLikelyPersonName_(contextLines);
+}
+
+function addLinesNearMatch_(lines, match, contextLines, seenLines) {
+  if (!match || !match[0]) return;
+
+  for (let i = 0; i < lines.length; i++) {
+    if (String(lines[i] || "").indexOf(match[0]) === -1) continue;
+
+    if (lines[i - 1]) addContextLine_(contextLines, seenLines, lines[i - 1]);
+    addContextLine_(contextLines, seenLines, lines[i]);
+    if (lines[i + 1]) addContextLine_(contextLines, seenLines, lines[i + 1]);
+  }
+}
+
+function addContextLine_(contextLines, seenLines, line) {
+  const cleanLine = String(line || "").trim();
+  if (!cleanLine || seenLines[cleanLine]) return;
+
+  seenLines[cleanLine] = true;
+  contextLines.push(cleanLine);
+}
+
+function findFirstLikelyPersonName_(lines) {
+  const nameRegex = /\b([A-Z][a-z]+(?:[-'][A-Z][a-z]+)? [A-Z][a-z]+(?:[-'][A-Z][a-z]+)?)\b/g;
+  const excludedNames = {
+    "Happy Hooker": true,
+    "Rental Agreement": true,
+    "Happy Campers": true,
+    "Coachmen Clipper": true,
+    "Glen Ellis": true
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = String(lines[i] || "");
+    let match;
+
+    while ((match = nameRegex.exec(line)) !== null) {
+      const candidate = String(match[1] || "").trim();
+      if (!candidate || excludedNames[candidate]) continue;
+      return candidate;
+    }
+  }
+
+  return "";
 }
 
 function getAgreementFieldValue_(fields, possibleNames) {

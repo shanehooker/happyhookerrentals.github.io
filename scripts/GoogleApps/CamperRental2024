@@ -275,6 +275,8 @@ function findExistingContactRow_(sheet, headerRow, nextRow, contactInfo) {
   const normalizedPhone = normalizePhoneNumberForMatch_(contactInfo.renterPhone);
   const normalizedEmail = normalizeContactValue_(contactInfo.renterEmail);
   const useNameOnlyMatch = normalizedEmail === "outdoorsy";
+  const hasMeaningfulEmail = normalizedEmail !== "" && normalizedEmail !== "outdoorsy" && normalizedEmail !== "n/a";
+  const hasMeaningfulPhone = normalizedPhone !== "";
 
   for (let i = 0; i < values.length; i++) {
     const rowValues = values[i];
@@ -287,9 +289,9 @@ function findExistingContactRow_(sheet, headerRow, nextRow, contactInfo) {
       continue;
     }
 
-    if (normalizedEmail && rowEmail && normalizedEmail === rowEmail) return headerRow + 1 + i;
-    if (normalizedPhone && rowPhone && normalizedPhone === rowPhone) return headerRow + 1 + i;
-    if (normalizedName && rowName && normalizedName === rowName) return headerRow + 1 + i;
+    if (hasMeaningfulEmail && rowEmail && normalizedEmail === rowEmail) return headerRow + 1 + i;
+    if (hasMeaningfulPhone && rowPhone && normalizedPhone === rowPhone) return headerRow + 1 + i;
+    if (!hasMeaningfulEmail && !hasMeaningfulPhone && normalizedName && rowName && normalizedName === rowName) return headerRow + 1 + i;
   }
 
   return 0;
@@ -517,7 +519,8 @@ function createQuoteDraftEmail_(renterEmail, renterName, agreementFile) {
 }
 
 /**
- * Main function: creates a rental quote doc, adds row to Waiting to Book, creates calendar event
+ * Main function: validates quote uniqueness, creates a rental quote doc,
+ * updates Contacts, adds a row to Waiting to Book, and creates a calendar event.
  */
 function createQuote() {
   const statusLog = [];
