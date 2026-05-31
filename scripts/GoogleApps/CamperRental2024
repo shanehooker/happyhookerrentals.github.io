@@ -44,7 +44,11 @@ function addStatus_(statusLog, step, success, detail) {
 
 function showStatusLog_(title, statusLog) {
   const message = statusLog && statusLog.length ? statusLog.join("\n") : "No status messages were recorded.";
-  SpreadsheetApp.getUi().alert(title, message, SpreadsheetApp.getUi().ButtonSet.OK);
+  try {
+    SpreadsheetApp.getUi().alert(title, message, SpreadsheetApp.getUi().ButtonSet.OK);
+  } catch (e) {
+    Logger.log(`${title}: ${message}`);
+  }
 }
 
 
@@ -75,6 +79,13 @@ const INVOICE_COLUMN_HEADER = "Invoice";
 const CANCEL_COLUMN_HEADER = "Cancel";
 const WAITING_HEADER_ROW = 1;
 const BOOKINGS_HEADER_ROW = 3;
+const CONTACTS_CONTROL_ROW = 1;
+const CONTACTS_HEADER_ROW = 2;
+const CONTACTS_FIRST_DATA_ROW = 3;
+const CONTACTS_SELECT_COLUMN = 1;
+const CONTACTS_SELECT_ALL_RANGE_NAME = "selectAll";
+const CONTACTS_EMAIL_DRAFT_SUBJECT = "Happy Hooker Rentals";
+const HHR_EMAIL_ADDRESS = "happyhookerrentals@gmail.com";
 
 function getHhrCalendar_() {
   if (HHR_CALENDAR_ID && HHR_CALENDAR_ID.trim() !== "") {
@@ -187,6 +198,53 @@ function getNamedRangeDisplayValue_(ss, rangeName) {
   return range.getDisplayValue().trim();
 }
 
+function getContactsSheet_() {
+  const contactsSpreadsheet = getContactsSpreadsheet_();
+  const contactsSheet = contactsSpreadsheet.getSheetByName(CONTACTS_SHEET_NAME);
+
+  if (!contactsSheet) {
+    throw new Error(`Contacts sheet '${CONTACTS_SHEET_NAME}' not found in spreadsheet ${CONTACTS_SPREADSHEET_ID}.`);
+  }
+
+  return contactsSheet;
+}
+
+function getContactsSpreadsheet_() {
+  return SpreadsheetApp.openById(CONTACTS_SPREADSHEET_ID);
+}
+
+function buildCheckboxRule_() {
+  return SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build();
+}
+
+function getContactsSelectAllRange_() {
+  const contactsSpreadsheet = getContactsSpreadsheet_();
+  const selectAllRange = contactsSpreadsheet.getRangeByName(CONTACTS_SELECT_ALL_RANGE_NAME);
+  if (!selectAllRange) {
+    throw new Error(`Named range '${CONTACTS_SELECT_ALL_RANGE_NAME}' not found in spreadsheet ${CONTACTS_SPREADSHEET_ID}.`);
+  }
+  return selectAllRange;
+}
+
+function addSpreadsheetMenu_() {
+  try {
+    SpreadsheetApp.getUi()
+      .createMenu("Happy Hooker Rentals")
+      .addItem("Create Quote", "createQuote")
+      .addItem("Create Email", "createSelectedContactsEmail")
+      .addSeparator()
+      .addItem("Setup Contacts Selection", "setupContactsSelection")
+      .addItem("Setup Triggers", "setupOnEditTrigger")
+      .addToUi();
+  } catch (e) {
+    Logger.log("Could not create spreadsheet menu: " + e);
+  }
+}
+
+function onOpen() {
+  addSpreadsheetMenu_();
+}
+
 function getQuoteType_(ss) {
   const outdoorsyId = getNamedRangeDisplayValue_(ss, "outdoorsyId");
   return /^\d{8}$/.test(outdoorsyId) ? "Outdoorsy" : "Direct";
@@ -197,19 +255,14 @@ function insertContactRow_(renterName, renterPhone, renterEmail) {
     throw new Error("Cannot add contact row: renter name is blank.");
   }
 
-  const contactsSpreadsheet = SpreadsheetApp.openById(CONTACTS_SPREADSHEET_ID);
-  const contactsSheet = contactsSpreadsheet.getSheetByName(CONTACTS_SHEET_NAME);
-
-  if (!contactsSheet) {
-    throw new Error(`Contacts sheet '${CONTACTS_SHEET_NAME}' not found in spreadsheet ${CONTACTS_SPREADSHEET_ID}.`);
-  }
+  const contactsSheet = getContactsSheet_();
 
   const nextCell = findExactCell_(contactsSheet, "{{next}}");
   if (!nextCell) {
     throw new Error(`Cannot find {{next}} placeholder in '${CONTACTS_SHEET_NAME}'.`);
   }
 
-  const headerRow = 1;
+  const headerRow = CONTACTS_HEADER_ROW;
   const headers = contactsSheet.getRange(headerRow, 1, 1, contactsSheet.getLastColumn()).getDisplayValues()[0];
   const nameCol = getColumnIndexByHeaderName_(headers, "Renter Name");
   const phoneCol = getColumnIndexByHeaderName_(headers, "Renter Phone");
@@ -250,6 +303,7 @@ function insertContactRow_(renterName, renterPhone, renterEmail) {
   });
 
   contactsSheet.getRange(insertRow, 1, 1, rowValues.length).setValues([rowValues]);
+  contactsSheet.getRange(insertRow, CONTACTS_SELECT_COLUMN).setDataValidation(buildCheckboxRule_()).setValue(false);
 
   return {
     row: insertRow,
@@ -274,8 +328,8 @@ function findExistingContactRow_(sheet, headerRow, nextRow, contactInfo) {
   const normalizedName = normalizeContactValue_(contactInfo.renterName);
   const normalizedPhone = normalizePhoneNumberForMatch_(contactInfo.renterPhone);
   const normalizedEmail = normalizeContactValue_(contactInfo.renterEmail);
-  const useNameOnlyMatch = normalizedEmail === "outdoorsy";
-  const hasMeaningfulEmail = normalizedEmail !== "" && normalizedEmail !== "outdoorsy" && normalizedEmail !== "n/a";
+  const useNameOnlyMatch = normalizedEmail === "outdoorsy" || normalizedEmail === normalizeContactValue_(HHR_EMAIL_ADDRESS);
+  const hasMeaningfulEmail = isMeaningfulContactEmail_(normalizedEmail);
   const hasMeaningfulPhone = normalizedPhone !== "";
 
   for (let i = 0; i < values.length; i++) {
@@ -283,15 +337,18 @@ function findExistingContactRow_(sheet, headerRow, nextRow, contactInfo) {
     const rowName = normalizeContactValue_(rowValues[contactInfo.nameCol - 1]);
     const rowPhone = normalizePhoneNumberForMatch_(contactInfo.phoneCol ? rowValues[contactInfo.phoneCol - 1] : "");
     const rowEmail = normalizeContactValue_(contactInfo.emailCol ? rowValues[contactInfo.emailCol - 1] : "");
+    const sameName = normalizedName && rowName && normalizedName === rowName;
+    const samePhone = hasMeaningfulPhone && rowPhone && normalizedPhone === rowPhone;
+    const sameEmail = hasMeaningfulEmail && rowEmail && normalizedEmail === rowEmail;
 
     if (useNameOnlyMatch) {
-      if (normalizedName && rowName && normalizedName === rowName) return headerRow + 1 + i;
+      if (sameName) return headerRow + 1 + i;
       continue;
     }
 
-    if (hasMeaningfulEmail && rowEmail && normalizedEmail === rowEmail) return headerRow + 1 + i;
-    if (hasMeaningfulPhone && rowPhone && normalizedPhone === rowPhone) return headerRow + 1 + i;
-    if (!hasMeaningfulEmail && !hasMeaningfulPhone && normalizedName && rowName && normalizedName === rowName) return headerRow + 1 + i;
+    if (sameEmail) return headerRow + 1 + i;
+    if (samePhone && sameName) return headerRow + 1 + i;
+    if (!hasMeaningfulEmail && !hasMeaningfulPhone && sameName) return headerRow + 1 + i;
   }
 
   return 0;
@@ -303,6 +360,170 @@ function normalizeContactValue_(value) {
 
 function normalizePhoneNumberForMatch_(value) {
   return String(value || "").replace(/\D/g, "");
+}
+
+function isMeaningfulContactEmail_(normalizedEmail) {
+  if (!normalizedEmail) return false;
+  if (normalizedEmail === "outdoorsy" || normalizedEmail === "n/a") return false;
+  if (normalizedEmail === normalizeContactValue_(HHR_EMAIL_ADDRESS)) return false;
+  return true;
+}
+
+function setupContactsSelection() {
+  const contactsSheet = getContactsSheet_();
+  const statusLog = [];
+  const nextCell = findExactCell_(contactsSheet, "{{next}}");
+
+  if (!nextCell) {
+    addStatus_(statusLog, "Contacts selection", false, `Cannot find {{next}} placeholder in '${CONTACTS_SHEET_NAME}'.`);
+    showStatusLog_("Contacts Selection Setup", statusLog);
+    return;
+  }
+
+  const selectAllRange = getContactsSelectAllRange_();
+  selectAllRange.setDataValidation(buildCheckboxRule_()).setValue(false);
+  selectAllRange.offset(0, 1).setValue("Select All");
+
+  const dataRowCount = nextCell.getRow() - CONTACTS_FIRST_DATA_ROW;
+  if (dataRowCount > 0) {
+    const range = contactsSheet.getRange(CONTACTS_FIRST_DATA_ROW, CONTACTS_SELECT_COLUMN, dataRowCount, 1);
+    const currentValues = range.getValues().map(row => [row[0] === true]);
+    range.setDataValidation(buildCheckboxRule_());
+    range.setValues(currentValues);
+  }
+
+  addStatus_(statusLog, "Contacts selection", true, `Checkboxes are ready in ${selectAllRange.getA1Notation()} and A${CONTACTS_FIRST_DATA_ROW}:A.`);
+  showStatusLog_("Contacts Selection Setup", statusLog);
+}
+
+function toggleAllContactSelections_(contactsSheet, shouldSelect) {
+  const nextCell = findExactCell_(contactsSheet, "{{next}}");
+  if (!nextCell) {
+    throw new Error(`Cannot find {{next}} placeholder in '${CONTACTS_SHEET_NAME}'.`);
+  }
+
+  const dataRowCount = nextCell.getRow() - CONTACTS_FIRST_DATA_ROW;
+  if (dataRowCount <= 0) return 0;
+
+  const values = Array.from({ length: dataRowCount }, () => [shouldSelect]);
+  contactsSheet.getRange(CONTACTS_FIRST_DATA_ROW, CONTACTS_SELECT_COLUMN, dataRowCount, 1).setValues(values);
+  return dataRowCount;
+}
+
+function clearAllContactSelections_(contactsSheet) {
+  const nextCell = findExactCell_(contactsSheet, "{{next}}");
+  if (!nextCell) {
+    throw new Error(`Cannot find {{next}} placeholder in '${CONTACTS_SHEET_NAME}'.`);
+  }
+
+  const dataRowCount = nextCell.getRow() - CONTACTS_FIRST_DATA_ROW;
+  if (dataRowCount > 0) {
+    contactsSheet.getRange(CONTACTS_FIRST_DATA_ROW, CONTACTS_SELECT_COLUMN, dataRowCount, 1)
+      .setValues(Array.from({ length: dataRowCount }, () => [false]));
+  }
+
+  getContactsSelectAllRange_().setValue(false);
+}
+
+function getPreferredDraftFromAddress_() {
+  const activeEmail = Session.getActiveUser().getEmail();
+  if (String(activeEmail || "").toLowerCase() === HHR_EMAIL_ADDRESS.toLowerCase()) {
+    return HHR_EMAIL_ADDRESS;
+  }
+
+  const aliases = GmailApp.getAliases().map(alias => String(alias || "").toLowerCase());
+  if (aliases.includes(HHR_EMAIL_ADDRESS.toLowerCase())) {
+    return HHR_EMAIL_ADDRESS;
+  }
+
+  return "";
+}
+
+function isUsableRecipientEmail_(value) {
+  const normalizedEmail = normalizeContactValue_(value);
+  if (!normalizedEmail) return false;
+  if (normalizedEmail === "outdoorsy" || normalizedEmail === "n/a") return false;
+  if (normalizedEmail === normalizeContactValue_(HHR_EMAIL_ADDRESS)) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
+}
+
+function createSelectedContactsEmail() {
+  const contactsSheet = getContactsSheet_();
+  const nextCell = findExactCell_(contactsSheet, "{{next}}");
+
+  if (!nextCell) {
+    SpreadsheetApp.getUi().alert("Create Email", `Cannot find {{next}} placeholder in '${CONTACTS_SHEET_NAME}'.`, SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const headers = contactsSheet.getRange(CONTACTS_HEADER_ROW, 1, 1, contactsSheet.getLastColumn()).getDisplayValues()[0];
+  const emailCol = getColumnIndexByHeaderName_(headers, "Renter Email");
+  if (!emailCol) {
+    SpreadsheetApp.getUi().alert("Create Email", `Column 'Renter Email' not found in '${CONTACTS_SHEET_NAME}'.`, SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const dataRowCount = nextCell.getRow() - CONTACTS_FIRST_DATA_ROW;
+  if (dataRowCount <= 0) {
+    SpreadsheetApp.getUi().alert("Create Email", `No renter rows found in '${CONTACTS_SHEET_NAME}'.`, SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const values = contactsSheet.getRange(CONTACTS_FIRST_DATA_ROW, 1, dataRowCount, contactsSheet.getLastColumn()).getDisplayValues();
+  const selectedEmails = [];
+  const seenEmails = {};
+  let selectedCount = 0;
+
+  values.forEach(rowValues => {
+    const isSelected = String(rowValues[CONTACTS_SELECT_COLUMN - 1] || "").toUpperCase() === "TRUE";
+    if (!isSelected) return;
+
+    selectedCount++;
+    const renterEmail = String(rowValues[emailCol - 1] || "").trim();
+    if (!isUsableRecipientEmail_(renterEmail)) return;
+
+    const normalizedEmail = renterEmail.toLowerCase();
+    if (seenEmails[normalizedEmail]) return;
+    seenEmails[normalizedEmail] = true;
+    selectedEmails.push(renterEmail);
+  });
+
+  if (!selectedCount) {
+    SpreadsheetApp.getUi().alert("Create Email", "No renters are selected.", SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  if (!selectedEmails.length) {
+    clearAllContactSelections_(contactsSheet);
+    SpreadsheetApp.getUi().alert("Create Email", "Selected renters did not have any email addresses.", SpreadsheetApp.getUi().ButtonSet.OK);
+    return;
+  }
+
+  const draftFrom = getPreferredDraftFromAddress_();
+  const draftTo = draftFrom || Session.getActiveUser().getEmail();
+  const options = {
+    bcc: selectedEmails.join(","),
+    name: "Happy Hooker Rentals"
+  };
+
+  if (draftFrom) {
+    options.from = draftFrom;
+  }
+
+  GmailApp.createDraft(
+    draftTo,
+    CONTACTS_EMAIL_DRAFT_SUBJECT,
+    "",
+    options
+  );
+
+  clearAllContactSelections_(contactsSheet);
+
+  SpreadsheetApp.getUi().alert(
+    "Create Email",
+    `A draft email is created in ${draftTo} to ${selectedEmails.length} recipients that were selected.`,
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
 }
 
 function escapeHtml_(text) {
@@ -1704,10 +1925,11 @@ function generateInvoice(row) {
 
 /**
  * Installable onEdit trigger to handle:
- * 1. Book checkbox clicks on Waiting to Book
- * 2. Cancel checkbox clicks on Waiting to Book
- * 3. Invoice checkbox clicks on Bookings
- * 4. Cancel checkbox clicks on Bookings
+ * 1. Select All checkbox clicks on Contacts
+ * 2. Book checkbox clicks on Waiting to Book
+ * 3. Cancel checkbox clicks on Waiting to Book
+ * 4. Invoice checkbox clicks on Bookings
+ * 5. Cancel checkbox clicks on Bookings
  */
 function onEditHandler(e) {
   try {
@@ -1719,10 +1941,22 @@ function onEditHandler(e) {
     const sheetName = sheet.getName();
     const editedRow = range.getRow();
     const editedCol = range.getColumn();
+    const ui = SpreadsheetApp.getUi();
+
+    if (sheetName === CONTACTS_SHEET_NAME) {
+      const selectAllRange = getContactsSelectAllRange_();
+      if (
+        range.getSheet().getSheetId() === selectAllRange.getSheet().getSheetId() &&
+        range.getA1Notation() === selectAllRange.getA1Notation()
+      ) {
+        toggleAllContactSelections_(sheet, e.value === "TRUE");
+        return;
+      }
+
+      return;
+    }
 
     if (e.value !== "TRUE") return;
-
-    const ui = SpreadsheetApp.getUi();
 
     // Existing Book workflow
     if (sheetName === WAITING_SHEET_NAME) {
@@ -1812,13 +2046,36 @@ function onEditHandler(e) {
 }
 
 /**
- * One-time setup to create installable onEdit trigger
+ * One-time setup to create installable edit/open triggers for both the rental
+ * spreadsheet and the shared Contacts spreadsheet.
  */
 function setupOnEditTrigger() {
-  const ss = SpreadsheetApp.getActive();
+  const spreadsheets = [
+    SpreadsheetApp.getActive(),
+    SpreadsheetApp.openById(CONTACTS_SPREADSHEET_ID)
+  ];
   const triggers = ScriptApp.getProjectTriggers();
-  for (const t of triggers) {
-    if (t.getHandlerFunction() === "onEditHandler") return;
+
+  for (const ss of spreadsheets) {
+    let hasEditTrigger = false;
+    let hasOpenTrigger = false;
+
+    for (const t of triggers) {
+      if (!t.getTriggerSourceId || t.getTriggerSourceId() !== ss.getId()) continue;
+
+      if (t.getHandlerFunction() === "onEditHandler") {
+        hasEditTrigger = true;
+      }
+      if (t.getHandlerFunction() === "onOpen") {
+        hasOpenTrigger = true;
+      }
+    }
+
+    if (!hasEditTrigger) {
+      ScriptApp.newTrigger("onEditHandler").forSpreadsheet(ss).onEdit().create();
+    }
+    if (!hasOpenTrigger) {
+      ScriptApp.newTrigger("onOpen").forSpreadsheet(ss).onOpen().create();
+    }
   }
-  ScriptApp.newTrigger("onEditHandler").forSpreadsheet(ss).onEdit().create();
 }
