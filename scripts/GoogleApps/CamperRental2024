@@ -66,11 +66,15 @@ const QUOTE_TARGET_SUBFOLDER = "2026";
 const QUOTE_FOLDER_ID = "1-uRn7J6lDS9D6Xa7SH6QJb1TOXdg4DlJ";
 const INVOICE_TEMPLATE_ID = "";
 const INVOICE_TEMPLATE_NAME = "TemplateInvoice-2026";
+const WAITING_SHEET_NAME = "Waiting to Book";
 const CONTACTS_SPREADSHEET_ID = "1GVOBCWJyu-61WxOjqkPDQg5jDE6RNtr4SmwVgMimxas";
 const CONTACTS_SHEET_NAME = "Contacts";
 const BOOKINGS_SHEET_NAME = "Bookings";
 const INCOME_SHEET_NAME = "Income";
 const INVOICE_COLUMN_HEADER = "Invoice";
+const CANCEL_COLUMN_HEADER = "Cancel";
+const WAITING_HEADER_ROW = 1;
+const BOOKINGS_HEADER_ROW = 3;
 
 function getHhrCalendar_() {
   if (HHR_CALENDAR_ID && HHR_CALENDAR_ID.trim() !== "") {
@@ -181,6 +185,11 @@ function getNamedRangeDisplayValue_(ss, rangeName) {
   const range = ss.getRangeByName(rangeName);
   if (!range) return "";
   return range.getDisplayValue().trim();
+}
+
+function getQuoteType_(ss) {
+  const outdoorsyId = getNamedRangeDisplayValue_(ss, "outdoorsyId");
+  return /^\d{8}$/.test(outdoorsyId) ? "Outdoorsy" : "Direct";
 }
 
 function insertContactRow_(renterName, renterPhone, renterEmail) {
@@ -517,6 +526,7 @@ function createQuote() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const quoteSheet = ss.getSheetByName(QUOTE_SHEET);
   const waitingSheet = ss.getSheetByName(WAITING_SHEET);
+  const quoteType = getQuoteType_(ss);
 
   let newFile = null;
   let newDocName = "";
@@ -571,6 +581,7 @@ function createQuote() {
     const mergeValues = getNamedRangeMergeValues_(ss);
     mergeValues.today = today;
     mergeValues.date = today;
+    mergeValues.outdoorsyRentalCost = getNamedRangeDisplayValue_(ss, "outdoorsyTotalCost");
 
     replaceNamedRangePlaceholders_(doc, mergeValues);
     doc.saveAndClose();
@@ -578,11 +589,37 @@ function createQuote() {
     addStatus_(statusLog, "Template merge", true, "Replaced named-range placeholders in the agreement doc.");
 
     // STEP 3B: Create draft email after the agreement has been fully merged
+    if (quoteType === "Outdoorsy") {
+      addStatus_(statusLog, "Email quote skipped", true, "Outdoorsy Quote");
+    } else {
+      try {
+        const draftStatus = createQuoteDraftEmail_(renterEmail, renterName, newFile);
+        addStatus_(statusLog, "Draft email", true, draftStatus);
+      } catch (e) {
+        addStatus_(statusLog, "Draft email", false, e.toString());
+      }
+    }
+
+    // STEP 3C: Insert renter into Contacts sheet
     try {
-      const draftStatus = createQuoteDraftEmail_(renterEmail, renterName, newFile);
-      addStatus_(statusLog, "Draft email", true, draftStatus);
+      const contactInsert = insertContactRow_(renterName, renterPhone, renterEmail);
+      if (contactInsert.wasAdded) {
+        addStatus_(
+          statusLog,
+          "Contacts",
+          true,
+          `Inserted renter into '${CONTACTS_SHEET_NAME}' row ${contactInsert.row} with Year Added ${contactInsert.yearAdded}.`
+        );
+      } else {
+        addStatus_(
+          statusLog,
+          "Contacts",
+          true,
+          `Renter already found in '${CONTACTS_SHEET_NAME}' row ${contactInsert.row}.`
+        );
+      }
     } catch (e) {
-      addStatus_(statusLog, "Draft email", false, e.toString());
+      addStatus_(statusLog, "Contacts", false, e.toString());
     }
 
     // STEP 3C: Insert renter into Contacts sheet
@@ -630,12 +667,14 @@ function createQuote() {
     const insertRow = finder.getRow();
     waitingSheet.insertRowBefore(insertRow);
     const newRow = insertRow;
+    const nextPaymentValue = quoteData["End Date"] || getMergeValue_(mergeValues, ["endDate", "End Date", "rentalEndDate"]) || "";
 
     const rowValues = waitingHeaders.map(header => {
       let value = quoteData[header] || "";
-      if (header === "Outdoorsy") value = "N";
+      if (header === "Outdoorsy") value = quoteType === "Outdoorsy" ? "Y" : "N";
       if (header === "Quote Date" || header === "Booking Date") value = today;
       if (header === "Booking ID") value = bookingId;
+      if (header === "Next Payment") value = nextPaymentValue;
       return value;
     });
     waitingSheet.getRange(newRow, 1, 1, rowValues.length).setValues([rowValues]);
@@ -859,6 +898,49 @@ function getRowDataByHeaders_(sheet, headerRow, dataRow) {
   return data;
 }
 
+function ensureCheckboxColumn_(sheet, headerRow, headerName) {
+  let col = getColumnByHeader_(sheet, headerRow, headerName);
+  if (!col) {
+    col = sheet.getLastColumn() + 1;
+    sheet.getRange(headerRow, col).setValue(headerName);
+  }
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= headerRow) return col;
+
+  const range = sheet.getRange(headerRow + 1, col, lastRow - headerRow, 1);
+  const rule = SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build();
+  const normalizedValues = range.getValues().map(row => [row[0] === true]);
+
+  range.setDataValidation(rule);
+  range.setValues(normalizedValues);
+
+  return col;
+}
+
+function setupCancelColumns() {
+  const statusLog = [];
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const waitingSheet = ss.getSheetByName(WAITING_SHEET_NAME);
+  const bookingsSheet = ss.getSheetByName(BOOKINGS_SHEET_NAME);
+
+  if (!waitingSheet) {
+    addStatus_(statusLog, "Waiting to Book cancel column", false, `Sheet '${WAITING_SHEET_NAME}' not found.`);
+  } else {
+    const waitingCol = ensureCheckboxColumn_(waitingSheet, WAITING_HEADER_ROW, CANCEL_COLUMN_HEADER);
+    addStatus_(statusLog, "Waiting to Book cancel column", true, `Column ${waitingCol} is ready.`);
+  }
+
+  if (!bookingsSheet) {
+    addStatus_(statusLog, "Bookings cancel column", false, `Sheet '${BOOKINGS_SHEET_NAME}' not found.`);
+  } else {
+    const bookingsCol = ensureCheckboxColumn_(bookingsSheet, BOOKINGS_HEADER_ROW, CANCEL_COLUMN_HEADER);
+    addStatus_(statusLog, "Bookings cancel column", true, `Column ${bookingsCol} is ready.`);
+  }
+
+  showStatusLog_("Cancel Column Setup", statusLog);
+}
+
 function safeNoSpaces_(value) {
   return String(value || "").trim().replace(/\s+/g, "");
 }
@@ -874,6 +956,127 @@ function parseMoney_(value) {
 
 function formatMoney_(value) {
   return "$" + Number(value || 0).toFixed(2);
+}
+
+function getRentalAgreementCandidateNames_(bookingId, renterName) {
+  const safeBooking = safeNoSpaces_(bookingId);
+  const safeName = safeNoSpaces_(renterName);
+
+  return [
+    `quote-${safeBooking}-${safeName}-RentalAgreement`,
+    `${safeBooking}-${safeName}-RentalAgreement`
+  ];
+}
+
+function trashRentalAgreementFiles_(bookingId, renterName) {
+  const folder = DriveApp.getFolderById(QUOTE_FOLDER_ID);
+  const candidateNames = getRentalAgreementCandidateNames_(bookingId, renterName);
+  const seen = {};
+  const trashedFiles = [];
+
+  candidateNames.forEach(fileName => {
+    const files = folder.getFilesByName(fileName);
+    while (files.hasNext()) {
+      const file = files.next();
+      const fileId = file.getId();
+      if (seen[fileId]) continue;
+
+      seen[fileId] = true;
+      file.setTrashed(true);
+      trashedFiles.push(file.getName());
+    }
+  });
+
+  return trashedFiles;
+}
+
+function deleteCalendarEventsForBooking_(rowData) {
+  const camper = String(rowData["Camper"] || "").trim();
+  const location = String(rowData["Location"] || "").trim();
+  const renterName = String(rowData["Renter Name"] || "").trim();
+  const bookingId = String(rowData["Booking ID"] || "").trim();
+  const startDate = parseSheetDate_(rowData["Start Date"]);
+  const endDate = parseSheetDate_(rowData["End Date"]);
+
+  if (!camper || !location || !renterName || !startDate || !endDate) {
+    throw new Error(
+      `Missing calendar fields. Camper='${camper}', Location='${location}', Renter='${renterName}', Start='${rowData["Start Date"]}', End='${rowData["End Date"]}'.`
+    );
+  }
+
+  const calendar = getHhrCalendar_();
+  if (!calendar) throw new Error(`Could not find ${getHhrCalendarLookupDescription_()}.`);
+
+  const holdTitle = `? hold ${camper} @${location} for ${renterName}`;
+  const bookedTitle = `${camper} @${location} for ${renterName}`;
+  const deletedEventIds = {};
+  let deletedCount = 0;
+
+  for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+    const events = calendar.getEventsForDay(new Date(d));
+
+    for (const event of events) {
+      const eventTitle = event.getTitle().trim();
+      const description = String(event.getDescription() || "");
+      const titleMatches = eventTitle === holdTitle || eventTitle === bookedTitle;
+      const bookingMatches = !bookingId || description.indexOf(bookingId) !== -1 || description === "";
+      const eventId = event.getId();
+
+      if (!titleMatches || !bookingMatches || deletedEventIds[eventId]) continue;
+
+      deletedEventIds[eventId] = true;
+      event.deleteEvent();
+      deletedCount++;
+    }
+  }
+
+  return deletedCount;
+}
+
+function cancelReservation(sheet, row, headerRow) {
+  const statusLog = [];
+  const rowData = getRowDataByHeaders_(sheet, headerRow, row);
+  const bookingId = String(rowData["Booking ID"] || "").trim();
+  const renterName = String(rowData["Renter Name"] || "").trim();
+
+  if (!bookingId || !renterName) {
+    throw new Error(`Booking ID or Renter Name missing from row ${row} in '${sheet.getName()}'.`);
+  }
+
+  addStatus_(statusLog, "Cancel setup", true, `Processing row ${row} for ${bookingId} ${renterName}.`);
+
+  try {
+    sheet.deleteRow(row);
+    addStatus_(statusLog, "Sheet row", true, `Deleted row ${row} from '${sheet.getName()}'.`);
+  } catch (e) {
+    addStatus_(statusLog, "Sheet row", false, e.toString());
+    showStatusLog_("Cancel Status", statusLog);
+    return;
+  }
+
+  try {
+    const trashedFiles = trashRentalAgreementFiles_(bookingId, renterName);
+    if (trashedFiles.length) {
+      addStatus_(statusLog, "Agreement document", true, `Moved ${trashedFiles.length} matching document(s) to trash.`);
+    } else {
+      addStatus_(statusLog, "Agreement document", false, "No matching quote or rental agreement document found.");
+    }
+  } catch (e) {
+    addStatus_(statusLog, "Agreement document", false, e.toString());
+  }
+
+  try {
+    const deletedEvents = deleteCalendarEventsForBooking_(rowData);
+    if (deletedEvents) {
+      addStatus_(statusLog, "Calendar event", true, `Deleted ${deletedEvents} matching event(s).`);
+    } else {
+      addStatus_(statusLog, "Calendar event", false, "No matching hold or booking event found.");
+    }
+  } catch (e) {
+    addStatus_(statusLog, "Calendar event", false, e.toString());
+  }
+
+  showStatusLog_("Cancel Status", statusLog);
 }
 
 function findRentalAgreementFile_(bookingId, renterName) {
@@ -1495,7 +1698,9 @@ function generateInvoice(row) {
 /**
  * Installable onEdit trigger to handle:
  * 1. Book checkbox clicks on Waiting to Book
- * 2. Invoice checkbox clicks on Bookings
+ * 2. Cancel checkbox clicks on Waiting to Book
+ * 3. Invoice checkbox clicks on Bookings
+ * 4. Cancel checkbox clicks on Bookings
  */
 function onEditHandler(e) {
   try {
@@ -1513,7 +1718,30 @@ function onEditHandler(e) {
     const ui = SpreadsheetApp.getUi();
 
     // Existing Book workflow
-    if (sheetName === "Waiting to Book") {
+    if (sheetName === WAITING_SHEET_NAME) {
+      const cancelCol = getColumnByHeader_(sheet, WAITING_HEADER_ROW, CANCEL_COLUMN_HEADER);
+
+      if (cancelCol && editedCol === cancelCol) {
+        if (editedRow <= WAITING_HEADER_ROW) return;
+
+        const rowData = getRowDataByHeaders_(sheet, WAITING_HEADER_ROW, editedRow);
+        const bookingId = String(rowData["Booking ID"] || "").trim();
+        const renterName = String(rowData["Renter Name"] || "").trim();
+        const response = ui.alert(
+          "Confirm Cancellation",
+          `Cancel booking in row ${editedRow} for ${bookingId} ${renterName}?`,
+          ui.ButtonSet.YES_NO
+        );
+
+        if (response !== ui.Button.YES) {
+          sheet.getRange(editedRow, editedCol).setValue(false);
+          return;
+        }
+
+        cancelReservation(sheet, editedRow, WAITING_HEADER_ROW);
+        return;
+      }
+
       if (editedCol !== 1) return;
 
       const response = ui.alert("Confirm Booking", `Move booking in row ${editedRow} to Bookings?`, ui.ButtonSet.YES_NO);
@@ -1529,10 +1757,32 @@ function onEditHandler(e) {
 
     // New Invoice workflow
     if (sheetName === BOOKINGS_SHEET_NAME) {
-      const invoiceCol = getColumnByHeader_(sheet, 3, INVOICE_COLUMN_HEADER);
+      const cancelCol = getColumnByHeader_(sheet, BOOKINGS_HEADER_ROW, CANCEL_COLUMN_HEADER);
+      if (cancelCol && editedCol === cancelCol) {
+        if (editedRow <= BOOKINGS_HEADER_ROW) return;
+
+        const rowData = getRowDataByHeaders_(sheet, BOOKINGS_HEADER_ROW, editedRow);
+        const bookingId = String(rowData["Booking ID"] || "").trim();
+        const renterName = String(rowData["Renter Name"] || "").trim();
+        const response = ui.alert(
+          "Confirm Cancellation",
+          `Cancel booking in row ${editedRow} for ${bookingId} ${renterName}?`,
+          ui.ButtonSet.YES_NO
+        );
+
+        if (response !== ui.Button.YES) {
+          sheet.getRange(editedRow, editedCol).setValue(false);
+          return;
+        }
+
+        cancelReservation(sheet, editedRow, BOOKINGS_HEADER_ROW);
+        return;
+      }
+
+      const invoiceCol = getColumnByHeader_(sheet, BOOKINGS_HEADER_ROW, INVOICE_COLUMN_HEADER);
 
       if (!invoiceCol || editedCol !== invoiceCol) return;
-      if (editedRow <= 3) return;
+      if (editedRow <= BOOKINGS_HEADER_ROW) return;
 
       const response = ui.alert("Confirm Invoice", `Create invoice for booking row ${editedRow}?`, ui.ButtonSet.YES_NO);
 
