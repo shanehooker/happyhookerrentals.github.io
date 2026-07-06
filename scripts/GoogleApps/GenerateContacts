@@ -22,6 +22,39 @@ const CONTACTS_EMAIL_SUBJECT_RANGE_NAME = "emailSubject";
 const CONTACTS_EMAIL_DRAFT_SUBJECT = "Happy Hooker Rentals";
 const HHR_EMAIL_ADDRESS = "happyhookerrentals@gmail.com";
 const CONTACTS_GROUP_NAME = "all campers";
+const HISTORICAL_FINANCIAL_REPORT_SHEET_NAME = "HistoricalFinancials";
+const HISTORICAL_FINANCIAL_FIELD_DEFS = [
+  {
+    key: "actualIncome",
+    label: "Actual Income",
+    aliases: ["actual income"],
+    fallbackAliases: ["income", "total income", "rental income"]
+  },
+  {
+    key: "expenses",
+    label: "Expenses",
+    aliases: ["expenses", "actual expenses", "total expenses"],
+    fallbackAliases: ["expense", "operating expenses"]
+  },
+  {
+    key: "grossProfit",
+    label: "Gross Profit",
+    aliases: ["gross profit"],
+    fallbackAliases: ["profit", "net income", "net profit"]
+  },
+  {
+    key: "taxReportedIncome",
+    label: "Tax Reported Income",
+    aliases: ["tax reported income", "reported income for taxes", "taxable income"],
+    fallbackAliases: ["tax income", "reported income"]
+  },
+  {
+    key: "taxReportedExpenses",
+    label: "Tax Reported Expenses",
+    aliases: ["tax reported expenses", "reported expenses for taxes", "tax deductible expenses"],
+    fallbackAliases: ["tax expenses", "reported expenses", "deductible expenses"]
+  }
+];
 const CONTACTS_NAME_HEADERS = ["Renter", "Renter Name"];
 const CONTACTS_PHONE_HEADERS = ["Renter phone", "Phone"];
 const CONTACTS_EMAIL_HEADERS = ["Renter email", "Email"];
@@ -67,6 +100,7 @@ function addGenerateContactsMenu_() {
       .createMenu("Happy Hooker Rentals")
       .addItem("Create Email", "createSelectedContactsEmail")
       .addItem("Setup Contacts Selection", "setupContactsSelection")
+      .addItem("Historical Financials", "GenerateHistoricalFinancials")
       .addItem("Import CustomerList", "ImportCustomerListToContacts")
       .addItem("Import Google Contacts", "ImportGoogleContactsToContacts")
       .addItem("Generate Contacts", "GenerateContacts")
@@ -306,6 +340,330 @@ function collectContactsFromBookingFolder_(statusLog) {
 
   addGenerateContactsStatus_(statusLog, "Bookings folder", true, `Scanned ${scannedFiles} file(s); matched ${matchedFiles} HHRentals sheet(s).`);
   return contacts;
+}
+
+function GenerateHistoricalFinancials() {
+  const statusLog = [];
+
+  try {
+    const reportRows = collectHistoricalFinancialRows_(statusLog);
+    const tabName = writeHistoricalFinancialReportSheet_(reportRows, statusLog);
+    addGenerateContactsStatus_(statusLog, "Historical financials", true, `Created '${tabName}' with ${reportRows.length} year row(s).`);
+  } catch (e) {
+    addGenerateContactsStatus_(statusLog, "Historical financials", false, e.toString());
+  }
+
+  showGenerateContactsStatus_("Historical Financials Status", statusLog);
+}
+
+function collectHistoricalFinancialRows_(statusLog) {
+  const folder = DriveApp.getFolderById(CONTACTS_BOOKING_FOLDER_ID);
+  const files = folder.getFiles();
+  const rowsByYear = {};
+  let scannedFiles = 0;
+  let matchedFiles = 0;
+
+  while (files.hasNext()) {
+    const file = files.next();
+    scannedFiles++;
+
+    if (!/^HHRentals/i.test(file.getName())) continue;
+    if (file.getMimeType() !== MimeType.GOOGLE_SHEETS) continue;
+
+    const year = extractHistoricalYearFromName_(file.getName());
+    if (!year || year > 2025) continue;
+
+    matchedFiles++;
+
+    try {
+      const spreadsheet = SpreadsheetApp.openById(file.getId());
+      const reportRow = extractHistoricalFinancialRow_(spreadsheet, file.getName(), year);
+      const existingRow = rowsByYear[year];
+
+      if (!existingRow || getHistoricalFinancialRowScore_(reportRow) > getHistoricalFinancialRowScore_(existingRow)) {
+        rowsByYear[year] = reportRow;
+      }
+
+      addGenerateContactsStatus_(
+        statusLog,
+        "Historical scan",
+        true,
+        `Scanned '${file.getName()}' for ${year}; found ${reportRow.foundCount} of ${HISTORICAL_FINANCIAL_FIELD_DEFS.length} fields.`
+      );
+    } catch (e) {
+      addGenerateContactsStatus_(statusLog, "Historical scan", false, `Failed '${file.getName()}': ${e}`);
+    }
+  }
+
+  addGenerateContactsStatus_(statusLog, "Historical files", true, `Scanned ${scannedFiles} file(s); matched ${matchedFiles} historical HHRentals sheet(s).`);
+
+  return Object.keys(rowsByYear)
+    .map(year => rowsByYear[year])
+    .sort((a, b) => Number(a.year) - Number(b.year));
+}
+
+function extractHistoricalYearFromName_(fileName) {
+  const matches = String(fileName || "").match(/\b(20\d{2})\b/g);
+  if (!matches || !matches.length) return 0;
+
+  const years = matches
+    .map(value => Number(value))
+    .filter(value => !isNaN(value));
+
+  if (!years.length) return 0;
+  return Math.max.apply(null, years);
+}
+
+function extractHistoricalFinancialRow_(spreadsheet, spreadsheetName, year) {
+  const row = {
+    year: year,
+    spreadsheetName: spreadsheetName,
+    actualIncome: "not found",
+    expenses: "not found",
+    grossProfit: "not found",
+    taxReportedIncome: "not found",
+    taxReportedExpenses: "not found",
+    sourceNotes: [],
+    foundCount: 0,
+    score: 0
+  };
+
+  const candidateSheets = getHistoricalCandidateSheets_(spreadsheet);
+
+  HISTORICAL_FINANCIAL_FIELD_DEFS.forEach(fieldDef => {
+    const directMatch = findHistoricalFieldValue_(candidateSheets, fieldDef.aliases, false);
+    const fallbackMatch = directMatch ? null : findHistoricalFieldValue_(candidateSheets, fieldDef.fallbackAliases, true);
+    const match = directMatch || fallbackMatch;
+
+    if (!match) return;
+
+    row[fieldDef.key] = match.value;
+    row.sourceNotes.push(`${fieldDef.label}: ${match.source}`);
+    row.foundCount++;
+    row.score += match.score;
+  });
+
+  if (!row.sourceNotes.length) {
+    row.sourceNotes.push("No matching summary values found.");
+  }
+
+  return row;
+}
+
+function getHistoricalCandidateSheets_(spreadsheet) {
+  const sheets = spreadsheet.getSheets();
+
+  return sheets.sort((a, b) => {
+    const aName = String(a.getName() || "").toLowerCase();
+    const bName = String(b.getName() || "").toLowerCase();
+    const aPriority = aName === "summary" ? 0 : (aName.indexOf("summary") !== -1 ? 1 : 2);
+    const bPriority = bName === "summary" ? 0 : (bName.indexOf("summary") !== -1 ? 1 : 2);
+
+    if (aPriority !== bPriority) return aPriority - bPriority;
+    return aName.localeCompare(bName);
+  });
+}
+
+function findHistoricalFieldValue_(candidateSheets, aliases, isFallback) {
+  if (!aliases || !aliases.length) return null;
+
+  let bestMatch = null;
+
+  candidateSheets.forEach(sheet => {
+    const values = sheet.getDataRange().getDisplayValues();
+    const match = findHistoricalFieldValueInSheet_(sheet, values, aliases, isFallback);
+
+    if (!match) return;
+    if (!bestMatch || match.score > bestMatch.score) {
+      bestMatch = match;
+    }
+  });
+
+  return bestMatch;
+}
+
+function findHistoricalFieldValueInSheet_(sheet, values, aliases, isFallback) {
+  if (!values.length || !values[0].length) return null;
+
+  const normalizedAliases = aliases.map(normalizeHistoricalLabel_);
+  let bestMatch = null;
+
+  for (let row = 0; row < values.length; row++) {
+    for (let col = 0; col < values[row].length; col++) {
+      const cellText = String(values[row][col] || "").trim();
+      if (!cellText) continue;
+
+      const normalizedCell = normalizeHistoricalLabel_(cellText);
+      if (!normalizedCell) continue;
+
+      for (let i = 0; i < normalizedAliases.length; i++) {
+        const alias = normalizedAliases[i];
+        const matchType = getHistoricalLabelMatchType_(normalizedCell, alias);
+        if (!matchType) continue;
+
+        const extractedValue = extractHistoricalValueNearCell_(values, row, col);
+        if (!extractedValue) continue;
+
+        const score = scoreHistoricalMatch_(sheet, extractedValue, matchType, isFallback);
+        const source = `${sheet.getName()}!${toA1Notation_(row + 1, col + 1)}`;
+        const note = isFallback ? `${source} (fallback match '${aliases[i]}')` : `${source} ('${aliases[i]}')`;
+
+        if (!bestMatch || score > bestMatch.score) {
+          bestMatch = {
+            value: extractedValue,
+            score: score,
+            source: note
+          };
+        }
+      }
+    }
+  }
+
+  return bestMatch;
+}
+
+function getHistoricalLabelMatchType_(normalizedCell, normalizedAlias) {
+  if (!normalizedCell || !normalizedAlias) return "";
+  if (normalizedCell === normalizedAlias) return "exact";
+  if (normalizedCell.indexOf(normalizedAlias) !== -1) return "contains";
+  return "";
+}
+
+function extractHistoricalValueNearCell_(values, row, col) {
+  const inlineValue = extractInlineHistoricalValue_(values[row][col]);
+  if (inlineValue) return inlineValue;
+
+  for (let offset = 1; offset <= 3; offset++) {
+    const rightValue = getHistoricalCellDisplayValue_(values, row, col + offset);
+    if (isLikelyHistoricalValue_(rightValue)) return rightValue;
+  }
+
+  for (let offset = 1; offset <= 3; offset++) {
+    const belowValue = getHistoricalCellDisplayValue_(values, row + offset, col);
+    if (isLikelyHistoricalValue_(belowValue)) return belowValue;
+  }
+
+  for (let rowOffset = 1; rowOffset <= 2; rowOffset++) {
+    for (let colOffset = 1; colOffset <= 2; colOffset++) {
+      const diagonalValue = getHistoricalCellDisplayValue_(values, row + rowOffset, col + colOffset);
+      if (isLikelyHistoricalValue_(diagonalValue)) return diagonalValue;
+    }
+  }
+
+  return "";
+}
+
+function extractInlineHistoricalValue_(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+
+  const colonMatch = text.match(/:\s*([^\s].+)$/);
+  if (colonMatch && isLikelyHistoricalValue_(colonMatch[1])) {
+    return String(colonMatch[1]).trim();
+  }
+
+  return "";
+}
+
+function getHistoricalCellDisplayValue_(values, row, col) {
+  if (row < 0 || col < 0) return "";
+  if (row >= values.length) return "";
+  if (col >= values[row].length) return "";
+  return String(values[row][col] || "").trim();
+}
+
+function isLikelyHistoricalValue_(value) {
+  const text = String(value || "").trim();
+  if (!text) return false;
+  if (/^(actual income|expenses|gross profit|tax reported income|tax reported expenses)$/i.test(text)) return false;
+  return /[$(]?\s*-?\$?\d[\d,]*(?:\.\d{2})?\s*\)?$/.test(text) || /^-?\d[\d,]*(?:\.\d{2})?$/.test(text);
+}
+
+function normalizeHistoricalLabel_(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function scoreHistoricalMatch_(sheet, value, matchType, isFallback) {
+  let score = 0;
+
+  if (matchType === "exact") score += 100;
+  if (matchType === "contains") score += 70;
+  if (!isFallback) score += 25;
+  if (isLikelyHistoricalValue_(value)) score += 20;
+
+  const sheetName = String(sheet.getName() || "").toLowerCase();
+  if (sheetName === "summary") score += 30;
+  else if (sheetName.indexOf("summary") !== -1) score += 20;
+  else if (sheetName.indexOf("tax") !== -1 || sheetName.indexOf("income") !== -1 || sheetName.indexOf("profit") !== -1) score += 10;
+
+  return score;
+}
+
+function getHistoricalFinancialRowScore_(row) {
+  return Number(row && row.score || 0);
+}
+
+function writeHistoricalFinancialReportSheet_(rows, statusLog) {
+  const destination = getContactsSpreadsheet_();
+  const existingSheet = destination.getSheetByName(HISTORICAL_FINANCIAL_REPORT_SHEET_NAME);
+
+  if (existingSheet) {
+    destination.deleteSheet(existingSheet);
+    addGenerateContactsStatus_(statusLog, "Historical output", true, `Replaced existing '${HISTORICAL_FINANCIAL_REPORT_SHEET_NAME}' tab.`);
+  }
+
+  const sheet = destination.insertSheet(HISTORICAL_FINANCIAL_REPORT_SHEET_NAME);
+  const headers = [[
+    "Year",
+    "Spreadsheet",
+    "Actual Income",
+    "Expenses",
+    "Gross Profit",
+    "Tax Reported Income",
+    "Tax Reported Expenses",
+    "Source Notes"
+  ]];
+
+  sheet.getRange(1, 1, 1, headers[0].length).setValues(headers);
+  sheet.getRange(1, 1, 1, headers[0].length).setFontWeight("bold");
+
+  if (rows.length) {
+    const outputRows = rows.map(row => [
+      row.year,
+      row.spreadsheetName,
+      row.actualIncome,
+      row.expenses,
+      row.grossProfit,
+      row.taxReportedIncome,
+      row.taxReportedExpenses,
+      row.sourceNotes.join("\n")
+    ]);
+
+    sheet.getRange(2, 1, outputRows.length, outputRows[0].length).setValues(outputRows);
+    sheet.getRange(2, 8, outputRows.length, 1).setWrap(true);
+  }
+
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, headers[0].length);
+  return HISTORICAL_FINANCIAL_REPORT_SHEET_NAME;
+}
+
+function toA1Notation_(row, col) {
+  let columnNumber = col;
+  let letters = "";
+
+  while (columnNumber > 0) {
+    const remainder = (columnNumber - 1) % 26;
+    letters = String.fromCharCode(65 + remainder) + letters;
+    columnNumber = Math.floor((columnNumber - 1) / 26);
+  }
+
+  return `${letters}${row}`;
 }
 
 function extractContactsFromBookingsSheet_(sheet, sourceFileName) {
