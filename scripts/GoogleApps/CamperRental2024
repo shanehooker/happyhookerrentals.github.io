@@ -47,8 +47,36 @@ function showStatusLog_(title, statusLog) {
   try {
     SpreadsheetApp.getUi().alert(title, message, SpreadsheetApp.getUi().ButtonSet.OK);
   } catch (e) {
+    try {
+      SpreadsheetApp.getActiveSpreadsheet().toast(message, title, 10);
+    } catch (toastErr) {
+      Logger.log(`Could not display toast for ${title}: ${toastErr}`);
+    }
     Logger.log(`${title}: ${message}`);
   }
+}
+
+function showMessage_(title, message, options) {
+  const settings = options || {};
+  const preferToastOnly = settings.preferToastOnly === true;
+  const toastSeconds = settings.toastSeconds || 8;
+
+  if (!preferToastOnly) {
+    try {
+      SpreadsheetApp.getUi().alert(title, message, SpreadsheetApp.getUi().ButtonSet.OK);
+      return;
+    } catch (e) {
+      Logger.log(`Could not display alert for ${title}: ${e}`);
+    }
+  }
+
+  try {
+    SpreadsheetApp.getActiveSpreadsheet().toast(message, title, toastSeconds);
+  } catch (toastErr) {
+    Logger.log(`Could not display toast for ${title}: ${toastErr}`);
+  }
+
+  Logger.log(`${title}: ${message}`);
 }
 
 
@@ -67,6 +95,10 @@ const QUOTE_TEMPLATE_DOC_NAME = "TemplateRentalAgreement-2026";
 const QUOTE_EMAIL_TEMPLATE_DOC_ID = "";
 const QUOTE_EMAIL_TEMPLATE_DOC_NAME = "TemplateQuoteEmail";
 const QUOTE_TARGET_SUBFOLDER = "2026";
+const QUOTE_SHEET_NAME = "Quote";
+const QUOTE_TRIGGER_CHECKBOX_A1 = "D3";
+const QUOTE_TRIGGER_STATUS_A1 = "E3";
+const CHECKBOX_CONFIRM_WINDOW_MS = 30000;
 const QUOTE_FOLDER_ID = "1-uRn7J6lDS9D6Xa7SH6QJb1TOXdg4DlJ";
 const INVOICE_TEMPLATE_ID = "";
 const INVOICE_TEMPLATE_NAME = "TemplateInvoice-2026";
@@ -233,6 +265,7 @@ function addSpreadsheetMenu_() {
       .addItem("Create Quote", "createQuote")
       .addItem("Create Email", "createSelectedContactsEmail")
       .addSeparator()
+      .addItem("Setup Quote Checkbox", "setupQuoteCheckbox")
       .addItem("Setup Contacts Selection", "setupContactsSelection")
       .addItem("Setup Triggers", "setupOnEditTrigger")
       .addToUi();
@@ -743,36 +776,40 @@ function createQuoteDraftEmail_(renterEmail, renterName, agreementFile) {
  * Main function: validates quote uniqueness, creates a rental quote doc,
  * updates Contacts, adds a row to Waiting to Book, and creates a calendar event.
  */
-function createQuote() {
+function createQuote(options) {
   const statusLog = [];
+  const createQuoteOptions = options || {};
+  const shouldOpenDocument = createQuoteOptions.openDocument !== false;
 
   // CONFIGURATION
-  const QUOTE_SHEET = "Quote";
   const BOOKING_ID_CELL = "bookingId";
   const RENTER_NAME_CELL = "renterName";
-  const WAITING_SHEET = "Waiting to Book";
   const NEXT_BOOKING_RANGE = "nextBookingId";
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const quoteSheet = ss.getSheetByName(QUOTE_SHEET);
-  const waitingSheet = ss.getSheetByName(WAITING_SHEET);
+  const quoteSheet = ss.getSheetByName(QUOTE_SHEET_NAME);
+  const waitingSheet = ss.getSheetByName(WAITING_SHEET_NAME);
   const quoteType = getQuoteType_(ss);
 
   let newFile = null;
   let newDocName = "";
+  let bookingId = "";
 
   try {
-    if (!quoteSheet) throw new Error(`Sheet '${QUOTE_SHEET}' not found.`);
-    if (!waitingSheet) throw new Error(`Sheet '${WAITING_SHEET}' not found.`);
+    if (!quoteSheet) throw new Error(`Sheet '${QUOTE_SHEET_NAME}' not found.`);
+    if (!waitingSheet) throw new Error(`Sheet '${WAITING_SHEET_NAME}' not found.`);
+
+    setQuoteTriggerStatus_("Create Quote is running...", "#fff2cc");
 
     // STEP 1: Read booking info
-    const bookingId = quoteSheet.getRange(BOOKING_ID_CELL).getDisplayValue().trim();
+    bookingId = quoteSheet.getRange(BOOKING_ID_CELL).getDisplayValue().trim();
     const renterName = quoteSheet.getRange(RENTER_NAME_CELL).getDisplayValue().trim();
     const renterPhone = getNamedRangeDisplayValue_(ss, "renterPhone") || getValueNextToLabel_(quoteSheet, "Renter Phone");
     const renterEmail = getNamedRangeDisplayValue_(ss, "renterEmail") || getValueNextToLabel_(quoteSheet, "Renter Email");
 
     if (!bookingId || !renterName) {
       addStatus_(statusLog, "Quote setup", false, "Missing Booking ID or Renter Name.");
+      updateQuoteTriggerStatusFromLog_(bookingId, statusLog, true);
       showStatusLog_("Create Quote Status", statusLog);
       return;
     }
@@ -793,6 +830,7 @@ function createQuote() {
             false,
             `A Booking ID for ${renterName} already exists. Cancel existing quote before creating a new one with the same Booking ID`
           );
+          updateQuoteTriggerStatusFromLog_(bookingId, statusLog, true);
           showStatusLog_("Create Quote Status", statusLog);
           return;
         }
@@ -803,6 +841,7 @@ function createQuote() {
     const templateFile = getDriveFileByIdOrName_(QUOTE_TEMPLATE_DOC_ID, QUOTE_TEMPLATE_DOC_NAME);
     if (!templateFile) {
       addStatus_(statusLog, "Template lookup", false, `Template document '${QUOTE_TEMPLATE_DOC_NAME}' not found.`);
+      updateQuoteTriggerStatusFromLog_(bookingId, statusLog, true);
       showStatusLog_("Create Quote Status", statusLog);
       return;
     }
@@ -888,6 +927,7 @@ function createQuote() {
     const finder = findExactCell_(waitingSheet, "{{nextQuote}}");
     if (!finder) {
       addStatus_(statusLog, "Waiting to Book", false, "Cannot find {{nextQuote}} placeholder.");
+      updateQuoteTriggerStatusFromLog_(bookingId, statusLog, true);
       showStatusLog_("Create Quote Status", statusLog);
       return;
     }
@@ -968,19 +1008,27 @@ function createQuote() {
       addStatus_(statusLog, "Calendar hold", false, e.toString());
     }
 
+    updateQuoteTriggerStatusFromLog_(bookingId, statusLog, false);
     showStatusLog_("Create Quote Status", statusLog);
 
     // STEP 8: Open doc
-    if (newFile) {
-      const fileUrl = newFile.getUrl();
-      const html = HtmlService.createHtmlOutput(`<script>
-        window.open('${fileUrl}', '_blank');
-        google.script.host.close();
-      </script>`).setWidth(100).setHeight(50);
-      SpreadsheetApp.getUi().showModalDialog(html, `Opening new rental agreement ${newDocName}...`);
+    if (newFile && shouldOpenDocument) {
+      try {
+        const fileUrl = newFile.getUrl();
+        const html = HtmlService.createHtmlOutput(`<script>
+          window.open('${fileUrl}', '_blank');
+          google.script.host.close();
+        </script>`).setWidth(100).setHeight(50);
+        SpreadsheetApp.getUi().showModalDialog(html, `Opening new rental agreement ${newDocName}...`);
+      } catch (uiErr) {
+        addStatus_(statusLog, "Open document", false, uiErr.toString());
+        updateQuoteTriggerStatusFromLog_(bookingId, statusLog, false);
+        Logger.log("createQuote open dialog error: " + uiErr);
+      }
     }
   } catch (e) {
     addStatus_(statusLog, "Unexpected error", false, e.toString());
+    updateQuoteTriggerStatusFromLog_(bookingId, statusLog, true);
     showStatusLog_("Create Quote Status", statusLog);
     Logger.log("createQuote error: " + e);
   }
@@ -989,7 +1037,8 @@ function createQuote() {
 /**
  * Moves a reservation from Waiting to Book → Bookings and updates calendar
  */
-function bookReservation(row) {
+function bookReservation(row, options) {
+  const settings = options || {};
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const waitingSheet = ss.getSheetByName("Waiting to Book");
   const bookingsSheet = ss.getSheetByName(BOOKINGS_SHEET_NAME);
@@ -1092,7 +1141,11 @@ function bookReservation(row) {
   waitingSheet.deleteRow(row);
 
   const warningMessage = followUpWarnings.length ? `\n\nWarnings:\n- ${followUpWarnings.join("\n- ")}` : "";
-  SpreadsheetApp.getUi().alert(`Reservation for ${waitingData["Renter Name"]} has been booked.${warningMessage}`);
+  showMessage_(
+    "Booking Status",
+    `Reservation for ${waitingData["Renter Name"]} has been booked.${warningMessage}`,
+    settings
+  );
 }
 
 
@@ -1100,6 +1153,100 @@ function bookReservation(row) {
 /**
  * Invoice configuration and helper functions
  */
+
+function setupQuoteCheckbox() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const quoteSheet = ss.getSheetByName(QUOTE_SHEET_NAME);
+
+  if (!quoteSheet) {
+    SpreadsheetApp.getUi().alert(`Sheet '${QUOTE_SHEET_NAME}' not found.`);
+    return;
+  }
+
+  quoteSheet.getRange(QUOTE_TRIGGER_CHECKBOX_A1)
+    .setDataValidation(buildCheckboxRule_())
+    .setValue(false);
+  quoteSheet.getRange(QUOTE_TRIGGER_STATUS_A1).setValue("Ready").setBackground("#d9ead3");
+
+  SpreadsheetApp.getUi().alert(`Quote checkbox is ready in ${QUOTE_SHEET_NAME}!${QUOTE_TRIGGER_CHECKBOX_A1}.`);
+}
+
+function setQuoteTriggerStatus_(message, backgroundColor) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const quoteSheet = ss.getSheetByName(QUOTE_SHEET_NAME);
+  if (!quoteSheet) return;
+
+  const statusCell = quoteSheet.getRange(QUOTE_TRIGGER_STATUS_A1);
+  statusCell.setValue(String(message || ""));
+  if (backgroundColor) statusCell.setBackground(backgroundColor);
+}
+
+function updateQuoteTriggerStatusFromLog_(bookingId, statusLog, forceError) {
+  const hasWarnings = statusLog.some(message => String(message || "").indexOf("⚠️") === 0);
+  const isError = forceError === true;
+  const color = isError ? "#f4cccc" : (hasWarnings ? "#fce5cd" : "#d9ead3");
+
+  let message = bookingId
+    ? `Quote ${bookingId} created successfully.`
+    : "Quote completed successfully.";
+
+  if (hasWarnings) {
+    message = bookingId
+      ? `Quote ${bookingId} completed with warnings.`
+      : "Quote completed with warnings.";
+  }
+
+  if (isError) {
+    const lastStatus = statusLog.length ? String(statusLog[statusLog.length - 1]) : "Quote failed.";
+    message = lastStatus;
+  }
+
+  setQuoteTriggerStatus_(message, color);
+}
+
+function getCheckboxConfirmationKey_(sheet, row, col, actionName) {
+  return [
+    "checkboxConfirm",
+    sheet.getParent().getId(),
+    sheet.getSheetId(),
+    row,
+    col,
+    actionName
+  ].join(":");
+}
+
+function requireCheckboxConfirmation_(sheet, row, col, actionName, promptText) {
+  const properties = PropertiesService.getDocumentProperties();
+  const key = getCheckboxConfirmationKey_(sheet, row, col, actionName);
+  const now = Date.now();
+  const existingRaw = properties.getProperty(key);
+
+  if (existingRaw) {
+    try {
+      const existing = JSON.parse(existingRaw);
+      if (existing && now - Number(existing.timestamp || 0) <= CHECKBOX_CONFIRM_WINDOW_MS) {
+        properties.deleteProperty(key);
+        return true;
+      }
+    } catch (e) {
+      Logger.log(`Could not parse checkbox confirmation state for ${key}: ${e}`);
+    }
+  }
+
+  properties.setProperty(key, JSON.stringify({ timestamp: now }));
+  sheet.getRange(row, col).setValue(false);
+  showMessage_(
+    `${actionName} Confirmation`,
+    `${promptText} Check the box again within 30 seconds to confirm.`,
+    { preferToastOnly: true, toastSeconds: 10 }
+  );
+  return false;
+}
+
+function clearCheckboxConfirmation_(sheet, row, col, actionName) {
+  const properties = PropertiesService.getDocumentProperties();
+  properties.deleteProperty(getCheckboxConfirmationKey_(sheet, row, col, actionName));
+}
 
 function getColumnByHeader_(sheet, headerRow, headerName) {
   const headers = sheet.getRange(headerRow, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
@@ -1261,7 +1408,8 @@ function deleteCalendarEventsForBooking_(rowData) {
   return deletedCount;
 }
 
-function cancelReservation(sheet, row, headerRow) {
+function cancelReservation(sheet, row, headerRow, options) {
+  const settings = options || {};
   const statusLog = [];
   const rowData = getRowDataByHeaders_(sheet, headerRow, row);
   const bookingId = String(rowData["Booking ID"] || "").trim();
@@ -1278,7 +1426,11 @@ function cancelReservation(sheet, row, headerRow) {
     addStatus_(statusLog, "Sheet row", true, `Deleted row ${row} from '${sheet.getName()}'.`);
   } catch (e) {
     addStatus_(statusLog, "Sheet row", false, e.toString());
-    showStatusLog_("Cancel Status", statusLog);
+    if (settings.preferToastOnly) {
+      showMessage_("Cancel Status", statusLog.join("\n"), settings);
+    } else {
+      showStatusLog_("Cancel Status", statusLog);
+    }
     return;
   }
 
@@ -1304,7 +1456,11 @@ function cancelReservation(sheet, row, headerRow) {
     addStatus_(statusLog, "Calendar event", false, e.toString());
   }
 
-  showStatusLog_("Cancel Status", statusLog);
+  if (settings.preferToastOnly) {
+    showMessage_("Cancel Status", statusLog.join("\n"), settings);
+  } else {
+    showStatusLog_("Cancel Status", statusLog);
+  }
 }
 
 function findRentalAgreementFile_(bookingId, renterName) {
@@ -1751,8 +1907,10 @@ function setupInvoiceColumn() {
   SpreadsheetApp.getUi().alert(`Invoice column is ready in column ${invoiceCol}.`);
 }
 
-function generateInvoice(row) {
+function generateInvoice(row, options) {
   const statusLog = [];
+  const settings = options || {};
+  const shouldOpenDocument = settings.openDocument !== false;
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const bookingsSheet = ss.getSheetByName(BOOKINGS_SHEET_NAME);
   const headerRow = 3;
@@ -1908,17 +2066,37 @@ function generateInvoice(row) {
 
     const invoiceUrl = invoice.file.getUrl();
 
-    showStatusLog_("Invoice Status", statusLog);
+    if (settings.preferToastOnly) {
+      showMessage_("Invoice Status", statusLog.join("\n"), settings);
+    } else {
+      showStatusLog_("Invoice Status", statusLog);
+    }
 
-    const html = HtmlService.createHtmlOutput(`<script>
-      window.open('${invoiceUrl}', '_blank');
-      google.script.host.close();
-    </script>`).setWidth(100).setHeight(50);
+    if (shouldOpenDocument) {
+      try {
+        const html = HtmlService.createHtmlOutput(`<script>
+          window.open('${invoiceUrl}', '_blank');
+          google.script.host.close();
+        </script>`).setWidth(100).setHeight(50);
 
-    SpreadsheetApp.getUi().showModalDialog(html, `Opening invoice ${invoice.name}...`);
+        SpreadsheetApp.getUi().showModalDialog(html, `Opening invoice ${invoice.name}...`);
+      } catch (uiErr) {
+        addStatus_(statusLog, "Open invoice", false, uiErr.toString());
+        if (settings.preferToastOnly) {
+          showMessage_("Invoice Status", statusLog.join("\n"), settings);
+        } else {
+          showStatusLog_("Invoice Status", statusLog);
+        }
+        Logger.log("generateInvoice open dialog error: " + uiErr);
+      }
+    }
   } catch (e) {
     addStatus_(statusLog, "Invoice error", false, e.toString());
-    showStatusLog_("Invoice Status", statusLog);
+    if (settings.preferToastOnly) {
+      showMessage_("Invoice Status", statusLog.join("\n"), settings);
+    } else {
+      showStatusLog_("Invoice Status", statusLog);
+    }
     Logger.log("generateInvoice error: " + e);
   }
 }
@@ -1926,10 +2104,11 @@ function generateInvoice(row) {
 /**
  * Installable onEdit trigger to handle:
  * 1. Select All checkbox clicks on Contacts
- * 2. Book checkbox clicks on Waiting to Book
- * 3. Cancel checkbox clicks on Waiting to Book
- * 4. Invoice checkbox clicks on Bookings
- * 5. Cancel checkbox clicks on Bookings
+ * 2. Create Quote checkbox click on Quote
+ * 3. Book checkbox clicks on Waiting to Book
+ * 4. Cancel checkbox clicks on Waiting to Book
+ * 5. Invoice checkbox clicks on Bookings
+ * 6. Cancel checkbox clicks on Bookings
  */
 function onEditHandler(e) {
   try {
@@ -1958,6 +2137,17 @@ function onEditHandler(e) {
 
     if (e.value !== "TRUE") return;
 
+    if (sheetName === QUOTE_SHEET_NAME) {
+      if (range.getA1Notation() !== QUOTE_TRIGGER_CHECKBOX_A1) return;
+
+      try {
+        createQuote({ openDocument: false });
+      } finally {
+        sheet.getRange(QUOTE_TRIGGER_CHECKBOX_A1).setValue(false);
+      }
+      return;
+    }
+
     // Existing Book workflow
     if (sheetName === WAITING_SHEET_NAME) {
       const cancelCol = getColumnByHeader_(sheet, WAITING_HEADER_ROW, CANCEL_COLUMN_HEADER);
@@ -1968,31 +2158,42 @@ function onEditHandler(e) {
         const rowData = getRowDataByHeaders_(sheet, WAITING_HEADER_ROW, editedRow);
         const bookingId = String(rowData["Booking ID"] || "").trim();
         const renterName = String(rowData["Renter Name"] || "").trim();
-        const response = ui.alert(
-          "Confirm Cancellation",
-          `Cancel booking in row ${editedRow} for ${bookingId} ${renterName}?`,
-          ui.ButtonSet.YES_NO
+        const confirmed = requireCheckboxConfirmation_(
+          sheet,
+          editedRow,
+          editedCol,
+          "waitingCancel",
+          `Cancel booking ${bookingId} ${renterName}?`
         );
 
-        if (response !== ui.Button.YES) {
-          sheet.getRange(editedRow, editedCol).setValue(false);
+        if (!confirmed) {
           return;
         }
 
-        cancelReservation(sheet, editedRow, WAITING_HEADER_ROW);
+        clearCheckboxConfirmation_(sheet, editedRow, editedCol, "waitingCancel");
+        cancelReservation(sheet, editedRow, WAITING_HEADER_ROW, { preferToastOnly: true, toastSeconds: 10 });
         return;
       }
 
       if (editedCol !== 1) return;
 
-      const response = ui.alert("Confirm Booking", `Move booking in row ${editedRow} to Bookings?`, ui.ButtonSet.YES_NO);
+      const rowData = getRowDataByHeaders_(sheet, WAITING_HEADER_ROW, editedRow);
+      const bookingId = String(rowData["Booking ID"] || "").trim();
+      const renterName = String(rowData["Renter Name"] || "").trim();
+      const confirmed = requireCheckboxConfirmation_(
+        sheet,
+        editedRow,
+        editedCol,
+        "waitingBook",
+        `Book reservation ${bookingId} ${renterName}?`
+      );
 
-      if (response !== ui.Button.YES) {
-        sheet.getRange(editedRow, 1).setValue(false);
+      if (!confirmed) {
         return;
       }
 
-      bookReservation(editedRow);
+      clearCheckboxConfirmation_(sheet, editedRow, editedCol, "waitingBook");
+      bookReservation(editedRow, { preferToastOnly: true, toastSeconds: 10 });
       return;
     }
 
@@ -2005,18 +2206,20 @@ function onEditHandler(e) {
         const rowData = getRowDataByHeaders_(sheet, BOOKINGS_HEADER_ROW, editedRow);
         const bookingId = String(rowData["Booking ID"] || "").trim();
         const renterName = String(rowData["Renter Name"] || "").trim();
-        const response = ui.alert(
-          "Confirm Cancellation",
-          `Cancel booking in row ${editedRow} for ${bookingId} ${renterName}?`,
-          ui.ButtonSet.YES_NO
+        const confirmed = requireCheckboxConfirmation_(
+          sheet,
+          editedRow,
+          editedCol,
+          "bookingsCancel",
+          `Cancel booking ${bookingId} ${renterName}?`
         );
 
-        if (response !== ui.Button.YES) {
-          sheet.getRange(editedRow, editedCol).setValue(false);
+        if (!confirmed) {
           return;
         }
 
-        cancelReservation(sheet, editedRow, BOOKINGS_HEADER_ROW);
+        clearCheckboxConfirmation_(sheet, editedRow, editedCol, "bookingsCancel");
+        cancelReservation(sheet, editedRow, BOOKINGS_HEADER_ROW, { preferToastOnly: true, toastSeconds: 10 });
         return;
       }
 
@@ -2025,23 +2228,28 @@ function onEditHandler(e) {
       if (!invoiceCol || editedCol !== invoiceCol) return;
       if (editedRow <= BOOKINGS_HEADER_ROW) return;
 
-      const response = ui.alert("Confirm Invoice", `Create invoice for booking row ${editedRow}?`, ui.ButtonSet.YES_NO);
+      const rowData = getRowDataByHeaders_(sheet, BOOKINGS_HEADER_ROW, editedRow);
+      const bookingId = String(rowData["Booking ID"] || "").trim();
+      const renterName = String(rowData["Renter Name"] || "").trim();
+      const confirmed = requireCheckboxConfirmation_(
+        sheet,
+        editedRow,
+        editedCol,
+        "bookingsInvoice",
+        `Create invoice for booking ${bookingId} ${renterName}?`
+      );
 
-      if (response !== ui.Button.YES) {
-        sheet.getRange(editedRow, editedCol).setValue(false);
+      if (!confirmed) {
         return;
       }
 
-      generateInvoice(editedRow);
+      clearCheckboxConfirmation_(sheet, editedRow, editedCol, "bookingsInvoice");
+      generateInvoice(editedRow, { preferToastOnly: true, toastSeconds: 10, openDocument: false });
       return;
     }
   } catch(err) {
     Logger.log("onEditHandler error: " + err);
-    try {
-      SpreadsheetApp.getUi().alert("onEditHandler error", String(err), SpreadsheetApp.getUi().ButtonSet.OK);
-    } catch (uiErr) {
-      Logger.log("Could not display onEditHandler error UI: " + uiErr);
-    }
+    showMessage_("onEditHandler error", String(err), { preferToastOnly: true, toastSeconds: 10 });
   }
 }
 
