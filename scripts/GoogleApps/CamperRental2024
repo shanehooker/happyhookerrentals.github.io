@@ -1,35 +1,80 @@
 /**
  * Helper functions for distance and duration calculations
  */
+const HOME_ADDRESS = "36 Juniper Dr, Amherst, NH";
+const ROUTE_CACHE_TTL_SECONDS = 21600;
+
 function MilesFromHome(address) {
-  var directions = Maps.newDirectionFinder()
-    .setOrigin('36 Juniper Dr, Amherst, NH')
-    .setDestination(address)
-    .setMode(Maps.DirectionFinder.Mode.DRIVING)
-    .getDirections();
-  if (directions && directions.error_message) throw directions.error_message;
-  if (directions && directions.routes && directions.routes[0] && directions.routes[0].legs && directions.routes[0].legs[0] && directions.routes[0].legs[0].distance) {
-    var distanceInMeters = directions.routes[0].legs[0].distance.value;
-    return metersToMiles(distanceInMeters);
-  }
-  return "unknown";
+  const routeSummary = getRouteSummaryFromHome_(address);
+  return routeSummary.miles;
 }
 
 function HoursFromHome(address) {
-  var directions = Maps.newDirectionFinder()
-    .setOrigin('36 Juniper Dr., Amherst, NH')
-    .setDestination(address)
-    .setMode(Maps.DirectionFinder.Mode.DRIVING)
-    .getDirections();
-  if (directions && directions.error_message) throw directions.error_message;
-  if (directions && directions.routes && directions.routes[0] && directions.routes[0].legs && directions.routes[0].legs[0])
-    return directions.routes[0].legs[0].duration.text;
-  return "unknown";
+  const routeSummary = getRouteSummaryFromHome_(address);
+  return routeSummary.hours;
 }
 
 function metersToMiles(meters) {
   if (typeof meters !== 'number') return null;
   return meters / 1000 * 0.621371;
+}
+
+function getRouteSummaryFromHome_(address) {
+  const destination = String(address || "").trim();
+  if (!destination) return { miles: "unknown", hours: "unknown" };
+
+  const cache = CacheService.getScriptCache();
+  const cacheKey = getRouteCacheKey_(destination);
+  const cachedSummary = cache.get(cacheKey);
+  if (cachedSummary) {
+    try {
+      return JSON.parse(cachedSummary);
+    } catch (e) {
+      Logger.log(`Could not parse cached route summary for '${destination}': ${e}`);
+    }
+  }
+
+  const directions = Maps.newDirectionFinder()
+    .setOrigin(HOME_ADDRESS)
+    .setDestination(destination)
+    .setMode(Maps.DirectionFinder.Mode.DRIVING)
+    .getDirections();
+
+  if (directions && directions.error_message) throw new Error(directions.error_message);
+  if (directions && directions.status && directions.status !== "OK") {
+    throw new Error(`Directions lookup failed for '${destination}' with status '${directions.status}'.`);
+  }
+
+  const leg = directions &&
+    directions.routes &&
+    directions.routes[0] &&
+    directions.routes[0].legs &&
+    directions.routes[0].legs[0];
+
+  if (!leg) {
+    return { miles: "unknown", hours: "unknown" };
+  }
+
+  const routeSummary = {
+    miles: leg.distance && typeof leg.distance.value === "number"
+      ? metersToMiles(leg.distance.value)
+      : "unknown",
+    hours: leg.duration && leg.duration.text
+      ? leg.duration.text
+      : "unknown"
+  };
+
+  try {
+    cache.put(cacheKey, JSON.stringify(routeSummary), ROUTE_CACHE_TTL_SECONDS);
+  } catch (e) {
+    Logger.log(`Could not cache route summary for '${destination}': ${e}`);
+  }
+
+  return routeSummary;
+}
+
+function getRouteCacheKey_(destination) {
+  return `route:${String(destination || "").trim().toLowerCase()}`;
 }
 
 
@@ -452,6 +497,184 @@ function formatSheetDate_(dateValue) {
   return Utilities.formatDate(parsedDate, Session.getScriptTimeZone(), "MM/dd/yyyy");
 }
 
+function normalizeSheetDate_(dateValue) {
+  const parsedDate = parseSheetDate_(dateValue);
+  if (!parsedDate) return null;
+  return new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate());
+}
+
+function getDateKey_(dateValue) {
+  const normalizedDate = normalizeSheetDate_(dateValue);
+  if (!normalizedDate) return "";
+  return Utilities.formatDate(normalizedDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
+}
+
+function getDateRangeDayKeys_(startDateValue, endDateValue) {
+  const startDate = normalizeSheetDate_(startDateValue);
+  const endDate = normalizeSheetDate_(endDateValue);
+  if (!startDate || !endDate || endDate < startDate) return [];
+
+  const dayKeys = [];
+  for (let d = new Date(startDate.getTime()); d <= endDate; d.setDate(d.getDate() + 1)) {
+    dayKeys.push(getDateKey_(d));
+  }
+
+  return dayKeys;
+}
+
+function doDateRangesOverlap_(firstStartDate, firstEndDate, secondStartDate, secondEndDate) {
+  const firstRangeDayKeys = getDateRangeDayKeys_(firstStartDate, firstEndDate);
+  const secondRangeDayKeys = getDateRangeDayKeys_(secondStartDate, secondEndDate);
+  if (!firstRangeDayKeys.length || !secondRangeDayKeys.length) return false;
+
+  const secondRangeLookup = {};
+  secondRangeDayKeys.forEach(dayKey => {
+    secondRangeLookup[dayKey] = true;
+  });
+
+  return firstRangeDayKeys.some(dayKey => secondRangeLookup[dayKey]);
+}
+
+function isSameSheetDate_(firstDateValue, secondDateValue) {
+  const firstDateKey = getDateKey_(firstDateValue);
+  const secondDateKey = getDateKey_(secondDateValue);
+  return firstDateKey !== "" && firstDateKey === secondDateKey;
+}
+
+function isBackToBackBooking_(quoteStartDate, quoteEndDate, existingStartDate, existingEndDate) {
+  return isSameSheetDate_(quoteStartDate, existingEndDate) || isSameSheetDate_(quoteEndDate, existingStartDate);
+}
+
+function normalizeTextValue_(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function buildQuoteConflictMessage_(severity, conflictType, sheetName, rowNumber, rowData, bookingKind) {
+  const camper = String(rowData["Camper"] || "").trim();
+  const renterName = String(rowData["Renter Name"] || "").trim() || "unknown renter";
+  const startDate = formatSheetDate_(rowData["Start Date"]) || String(rowData["Start Date"] || "").trim();
+  const endDate = formatSheetDate_(rowData["End Date"]) || String(rowData["End Date"] || "").trim();
+
+  return `${severity}: ${conflictType} with ${bookingKind} in '${sheetName}' row ${rowNumber} for camper '${camper}' (${startDate} - ${endDate}, ${renterName}).`;
+}
+
+function getSheetRowsByHeaders_(sheet, headerRow) {
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow <= headerRow || lastCol < 1) return [];
+
+  const headers = sheet.getRange(headerRow, 1, 1, lastCol).getDisplayValues()[0];
+  const values = sheet.getRange(headerRow + 1, 1, lastRow - headerRow, lastCol).getDisplayValues();
+
+  return values.map((rowValues, index) => {
+    const data = {};
+    headers.forEach((header, headerIndex) => {
+      if (header) data[String(header).trim()] = rowValues[headerIndex];
+    });
+
+    return {
+      rowNumber: headerRow + 1 + index,
+      data: data
+    };
+  });
+}
+
+function validateBookingConflictHeaders_(sheet, headerRow) {
+  const requiredHeaders = ["Camper", "Start Date", "End Date"];
+  const missingHeaders = requiredHeaders.filter(headerName => !getColumnByHeader_(sheet, headerRow, headerName));
+  if (!missingHeaders.length) return;
+
+  throw new Error(`Sheet '${sheet.getName()}' is missing required header(s): ${missingHeaders.join(", ")}.`);
+}
+
+function getQuoteConflicts_(workflowSpreadsheet, quoteContext) {
+  const bookingsSheet = workflowSpreadsheet.getSheetByName(BOOKINGS_SHEET_NAME);
+  const waitingSheet = workflowSpreadsheet.getSheetByName(WAITING_SHEET_NAME);
+
+  if (!bookingsSheet) {
+    throw new Error(`Sheet '${BOOKINGS_SHEET_NAME}' not found in '${workflowSpreadsheet.getName()}'.`);
+  }
+  if (!waitingSheet) {
+    throw new Error(`Sheet '${WAITING_SHEET_NAME}' not found in '${workflowSpreadsheet.getName()}'.`);
+  }
+
+  validateBookingConflictHeaders_(bookingsSheet, BOOKINGS_HEADER_ROW);
+  validateBookingConflictHeaders_(waitingSheet, WAITING_HEADER_ROW);
+
+  const conflicts = {
+    errors: [],
+    warnings: []
+  };
+
+  function scanSheet_(sheet, headerRow, bookingKind, bookingConflictSeverity) {
+    const rows = getSheetRowsByHeaders_(sheet, headerRow);
+
+    rows.forEach(row => {
+      const rowData = row.data;
+      const camper = String(rowData["Camper"] || "").trim();
+      const startDate = parseSheetDate_(rowData["Start Date"]);
+      const endDate = parseSheetDate_(rowData["End Date"]);
+
+      if (!camper || !startDate || !endDate) return;
+
+      const sameCamper = normalizeTextValue_(camper) === normalizeTextValue_(quoteContext.camper);
+      const isBackToBack = sameCamper && isBackToBackBooking_(quoteContext.startDate, quoteContext.endDate, startDate, endDate);
+
+      if (isBackToBack) {
+        conflicts.warnings.push(
+          buildQuoteConflictMessage_(
+            "warning",
+            "back-to-back booking",
+            sheet.getName(),
+            row.rowNumber,
+            rowData,
+            bookingKind
+          )
+        );
+      } else if (sameCamper && doDateRangesOverlap_(quoteContext.startDate, quoteContext.endDate, startDate, endDate)) {
+        const bookingConflictMessage = buildQuoteConflictMessage_(
+          bookingConflictSeverity,
+          "booking conflict",
+          sheet.getName(),
+          row.rowNumber,
+          rowData,
+          bookingKind
+        );
+
+        if (bookingConflictSeverity === "error") {
+          conflicts.errors.push(bookingConflictMessage);
+        } else {
+          conflicts.warnings.push(bookingConflictMessage);
+        }
+      }
+
+      const hasDeliveryConflict =
+        isSameSheetDate_(startDate, quoteContext.startDate) ||
+        isSameSheetDate_(startDate, quoteContext.endDate) ||
+        isSameSheetDate_(endDate, quoteContext.startDate) ||
+        isSameSheetDate_(endDate, quoteContext.endDate);
+
+      if (hasDeliveryConflict) {
+        conflicts.warnings.push(
+          buildQuoteConflictMessage_(
+            "warning",
+            "delivery conflict",
+            sheet.getName(),
+            row.rowNumber,
+            rowData,
+            bookingKind
+          )
+        );
+      }
+    });
+  }
+
+  scanSheet_(bookingsSheet, BOOKINGS_HEADER_ROW, "confirmed booking", "error");
+  scanSheet_(waitingSheet, WAITING_HEADER_ROW, "potential booking", "warning");
+
+  return conflicts;
+}
+
 /**
  * Draft email helpers.
  */
@@ -629,7 +852,7 @@ function findExistingContactRow_(sheet, headerRow, nextRow, contactInfo) {
 }
 
 function normalizeContactValue_(value) {
-  return String(value || "").trim().toLowerCase();
+  return normalizeTextValue_(value);
 }
 
 function normalizePhoneNumberForMatch_(value) {
@@ -1046,7 +1269,9 @@ function createQuote(options) {
     const renterName = quoteSheet.getRange(RENTER_NAME_CELL).getDisplayValue().trim();
     const renterPhone = getNamedRangeDisplayValue_(sourceSs, "renterPhone") || getValueNextToLabel_(quoteSheet, "Renter Phone");
     const renterEmail = getNamedRangeDisplayValue_(sourceSs, "renterEmail") || getValueNextToLabel_(quoteSheet, "Renter Email");
+    const camper = getNamedRangeDisplayValue_(sourceSs, "camper") || getValueNextToLabel_(quoteSheet, "Camper");
     const startDateRaw = getNamedRangeDisplayValue_(sourceSs, START_DATE_RANGE_NAME) || getValueNextToLabel_(quoteSheet, "Start Date");
+    const endDateRaw = getNamedRangeDisplayValue_(sourceSs, "endDate") || getValueNextToLabel_(quoteSheet, "End Date");
     const workflowContext = getQuoteWorkflowContext_(startDateRaw);
     const ss = workflowContext.spreadsheet;
     ensureSpreadsheetTriggers_(ss);
@@ -1070,6 +1295,37 @@ function createQuote(options) {
       true,
       `Using '${ss.getName()}' and folder '${workflowContext.yearFolder.getName()}' for ${workflowContext.year} based on start date '${startDateRaw}'.`
     );
+
+    const quoteStartDate = parseSheetDate_(startDateRaw);
+    const quoteEndDate = parseSheetDate_(endDateRaw);
+    if (camper && quoteStartDate && quoteEndDate) {
+      const conflicts = getQuoteConflicts_(ss, {
+        camper: camper,
+        startDate: quoteStartDate,
+        endDate: quoteEndDate
+      });
+
+      conflicts.errors.forEach(message => addStatus_(statusLog, "Conflict guard", false, message));
+      conflicts.warnings.forEach(message => addStatus_(statusLog, "Conflict guard", false, message));
+
+      if (conflicts.errors.length) {
+        showMessage_(
+          "Create Quote Error",
+          conflicts.errors.concat(conflicts.warnings).join("\n"),
+          { preferToastOnly: true, toastSeconds: 10 }
+        );
+        updateQuoteTriggerStatusFromLog_(bookingId, statusLog, true);
+        return;
+      }
+
+      if (conflicts.warnings.length) {
+        showMessage_(
+          "Create Quote Warning",
+          conflicts.warnings.join("\n"),
+          { preferToastOnly: true, toastSeconds: 10 }
+        );
+      }
+    }
 
     const waitingBookingIdCol = getColumnByHeader_(waitingSheet, 1, "Booking ID");
     if (waitingBookingIdCol) {
