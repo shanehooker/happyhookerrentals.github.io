@@ -94,7 +94,6 @@ const QUOTE_TEMPLATE_DOC_ID = "";
 const QUOTE_TEMPLATE_DOC_NAME = "TemplateRentalAgreement-2026";
 const QUOTE_EMAIL_TEMPLATE_DOC_ID = "";
 const QUOTE_EMAIL_TEMPLATE_DOC_NAME = "TemplateQuoteEmail";
-const QUOTE_TARGET_SUBFOLDER = "2026";
 const QUOTE_SHEET_NAME = "Quote";
 const QUOTE_TRIGGER_CHECKBOX_A1 = "D3";
 const QUOTE_TRIGGER_STATUS_A1 = "E3";
@@ -154,6 +153,233 @@ function getDriveFileByIdOrName_(fileId, fileName) {
   return file;
 }
 
+function getYearFolderName_(year) {
+  return String(year || "").trim();
+}
+
+function getIncomeExpensesSpreadsheetNamesForYear_(year) {
+  const normalizedYear = String(year || "").trim();
+  return [
+    `HHRentals-${normalizedYear}IncomeExpenses`,
+    `HHRentals${normalizedYear}-IncomeExpenses`,
+    `HHRentals-${normalizedYear}-IncomeExpenses`,
+    `HHRentals${normalizedYear}IncomeExpenses`
+  ];
+}
+
+function getQuoteRootFolder_() {
+  const configuredFolder = DriveApp.getFolderById(QUOTE_FOLDER_ID);
+  const configuredName = String(configuredFolder.getName() || "").trim();
+
+  if (/^\d{4}$/.test(configuredName)) {
+    const parents = configuredFolder.getParents();
+    if (parents.hasNext()) return parents.next();
+  }
+
+  return configuredFolder;
+}
+
+function getConfiguredQuoteFolder_() {
+  return DriveApp.getFolderById(QUOTE_FOLDER_ID);
+}
+
+function getWorkflowSearchFolders_() {
+  const rootFolder = getQuoteRootFolder_();
+  const folders = [rootFolder];
+  const parents = rootFolder.getParents();
+
+  if (parents.hasNext()) {
+    const parentFolder = parents.next();
+    if (parentFolder.getId() !== rootFolder.getId()) {
+      folders.push(parentFolder);
+    }
+  }
+
+  return folders;
+}
+
+function getFolderSearchChain_(folder) {
+  const folders = [];
+  const seen = {};
+  let currentFolder = folder;
+
+  while (currentFolder) {
+    const folderId = currentFolder.getId();
+    if (seen[folderId]) break;
+
+    seen[folderId] = true;
+    folders.push(currentFolder);
+
+    const parents = currentFolder.getParents();
+    currentFolder = parents.hasNext() ? parents.next() : null;
+  }
+
+  return folders;
+}
+
+function findGoogleSheetByNamesInFolder_(folder, possibleNames) {
+  for (const fileName of possibleNames) {
+    const matchingFiles = folder.getFilesByName(fileName);
+    let matchedFile = null;
+    let matchCount = 0;
+
+    while (matchingFiles.hasNext()) {
+      const file = matchingFiles.next();
+      if (file.getMimeType() !== MimeType.GOOGLE_SHEETS) continue;
+
+      if (!matchedFile) matchedFile = file;
+      matchCount++;
+    }
+
+    if (!matchedFile) continue;
+
+    if (matchCount > 1) {
+      Logger.log(`WARNING - Multiple Google Sheets named '${fileName}' found in '${folder.getName()}'. Using the first match.`);
+    }
+
+    return {
+      file: matchedFile,
+      matchedName: fileName,
+      folder: folder
+    };
+  }
+
+  return null;
+}
+
+function isWorkflowSpreadsheetName_(fileName) {
+  return /^HHRentals-?\d{4}-?IncomeExpenses$/.test(String(fileName || "").trim());
+}
+
+function getAllWorkflowSpreadsheets_() {
+  const spreadsheets = [];
+  const seenFileIds = {};
+  const folders = getWorkflowSearchFolders_();
+
+  for (const folder of folders) {
+    const files = folder.getFiles();
+
+    while (files.hasNext()) {
+      const file = files.next();
+      const fileId = file.getId();
+
+      if (seenFileIds[fileId]) continue;
+      if (file.getMimeType() !== MimeType.GOOGLE_SHEETS) continue;
+      if (!isWorkflowSpreadsheetName_(file.getName())) continue;
+
+      seenFileIds[fileId] = true;
+      spreadsheets.push(SpreadsheetApp.openById(fileId));
+    }
+  }
+
+  return spreadsheets;
+}
+
+function getRentalAgreementSearchFolders_(startDateValue) {
+  const folders = [];
+  const seenFolderIds = {};
+
+  function addFolder_(folder) {
+    if (!folder) return;
+
+    const folderId = folder.getId();
+    if (seenFolderIds[folderId]) return;
+
+    seenFolderIds[folderId] = true;
+    folders.push(folder);
+  }
+
+  try {
+    addFolder_(getQuoteStorageFolderForDate_(startDateValue).yearFolder);
+  } catch (e) {
+    Logger.log(`Could not derive year folder from start date '${startDateValue}': ${e}`);
+  }
+
+  const configuredFolder = getConfiguredQuoteFolder_();
+  const rootFolder = getQuoteRootFolder_();
+
+  addFolder_(configuredFolder);
+  addFolder_(rootFolder);
+
+  const rootSubfolders = rootFolder.getFolders();
+  while (rootSubfolders.hasNext()) {
+    const folder = rootSubfolders.next();
+    if (!/^\d{4}$/.test(String(folder.getName() || "").trim())) continue;
+    addFolder_(folder);
+  }
+
+  return folders;
+}
+
+function getQuoteStorageFolderForDate_(dateValue) {
+  const bookingDate = parseSheetDate_(dateValue);
+  if (!bookingDate) {
+    throw new Error(`Cannot determine quote storage folder because the booking start date '${dateValue}' is invalid.`);
+  }
+
+  const bookingYear = bookingDate.getFullYear();
+  const rootFolder = getQuoteRootFolder_();
+  const folderName = getYearFolderName_(bookingYear);
+  const matchingFolders = rootFolder.getFoldersByName(folderName);
+
+  if (!matchingFolders.hasNext()) {
+    throw new Error(
+      `Missing required year folder '${folderName}' under '${rootFolder.getName()}'. ` +
+      `Create a new sheet and folder for ${folderName} before creating quotes for that year.`
+    );
+  }
+
+  const yearFolder = matchingFolders.next();
+  if (matchingFolders.hasNext()) {
+    Logger.log(`WARNING - Multiple year folders named '${folderName}' found in '${rootFolder.getName()}'. Using the first match.`);
+  }
+
+  return {
+    year: bookingYear,
+    rootFolder: rootFolder,
+    yearFolder: yearFolder
+  };
+}
+
+function getWorkflowSpreadsheetForYear_(year) {
+  const rootFolder = getQuoteRootFolder_();
+  const possibleNames = getIncomeExpensesSpreadsheetNamesForYear_(year);
+  const folderSearchChain = getWorkflowSearchFolders_();
+
+  for (const folder of folderSearchChain) {
+    const match = findGoogleSheetByNamesInFolder_(folder, possibleNames);
+    if (match) {
+      Logger.log(
+        `Using workflow spreadsheet '${match.matchedName}' from folder '${match.folder.getName()}' for ${year}.`
+      );
+      return SpreadsheetApp.openById(match.file.getId());
+    }
+  }
+
+  throw new Error(
+    `Missing required spreadsheet for ${year}. Expected one of: ${possibleNames.join(", ")} ` +
+    `under '${rootFolder.getName()}' or one of its parent folders. Create the yearly sheet before creating quotes for that year.`
+  );
+}
+
+function getQuoteWorkflowContext_(startDateValue) {
+  const bookingDate = parseSheetDate_(startDateValue);
+  if (!bookingDate) {
+    throw new Error(`Cannot determine workflow year because the booking start date '${startDateValue}' is invalid.`);
+  }
+
+  const folderContext = getQuoteStorageFolderForDate_(bookingDate);
+  const workflowSpreadsheet = getWorkflowSpreadsheetForYear_(folderContext.year);
+
+  return {
+    bookingDate: bookingDate,
+    year: folderContext.year,
+    rootFolder: folderContext.rootFolder,
+    yearFolder: folderContext.yearFolder,
+    spreadsheet: workflowSpreadsheet
+  };
+}
+
 function findExactCell_(sheet, text) {
   return sheet.createTextFinder(text).matchEntireCell(true).findNext();
 }
@@ -209,6 +435,21 @@ function parseSheetDate_(value) {
 
   const parsed = new Date(value);
   return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function addDays_(dateValue, daysToAdd) {
+  const parsedDate = parseSheetDate_(dateValue);
+  if (!parsedDate) return null;
+
+  const result = new Date(parsedDate.getTime());
+  result.setDate(result.getDate() + Number(daysToAdd || 0));
+  return result;
+}
+
+function formatSheetDate_(dateValue) {
+  const parsedDate = parseSheetDate_(dateValue);
+  if (!parsedDate) return "";
+  return Utilities.formatDate(parsedDate, Session.getScriptTimeZone(), "MM/dd/yyyy");
 }
 
 /**
@@ -784,12 +1025,12 @@ function createQuote(options) {
   // CONFIGURATION
   const BOOKING_ID_CELL = "bookingId";
   const RENTER_NAME_CELL = "renterName";
+  const START_DATE_RANGE_NAME = "startDate";
   const NEXT_BOOKING_RANGE = "nextBookingId";
 
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const quoteSheet = ss.getSheetByName(QUOTE_SHEET_NAME);
-  const waitingSheet = ss.getSheetByName(WAITING_SHEET_NAME);
-  const quoteType = getQuoteType_(ss);
+  const sourceSs = SpreadsheetApp.getActiveSpreadsheet();
+  const quoteSheet = sourceSs.getSheetByName(QUOTE_SHEET_NAME);
+  const quoteType = getQuoteType_(sourceSs);
 
   let newFile = null;
   let newDocName = "";
@@ -797,15 +1038,23 @@ function createQuote(options) {
 
   try {
     if (!quoteSheet) throw new Error(`Sheet '${QUOTE_SHEET_NAME}' not found.`);
-    if (!waitingSheet) throw new Error(`Sheet '${WAITING_SHEET_NAME}' not found.`);
 
     setQuoteTriggerStatus_("Create Quote is running...", "#fff2cc");
 
     // STEP 1: Read booking info
     bookingId = quoteSheet.getRange(BOOKING_ID_CELL).getDisplayValue().trim();
     const renterName = quoteSheet.getRange(RENTER_NAME_CELL).getDisplayValue().trim();
-    const renterPhone = getNamedRangeDisplayValue_(ss, "renterPhone") || getValueNextToLabel_(quoteSheet, "Renter Phone");
-    const renterEmail = getNamedRangeDisplayValue_(ss, "renterEmail") || getValueNextToLabel_(quoteSheet, "Renter Email");
+    const renterPhone = getNamedRangeDisplayValue_(sourceSs, "renterPhone") || getValueNextToLabel_(quoteSheet, "Renter Phone");
+    const renterEmail = getNamedRangeDisplayValue_(sourceSs, "renterEmail") || getValueNextToLabel_(quoteSheet, "Renter Email");
+    const startDateRaw = getNamedRangeDisplayValue_(sourceSs, START_DATE_RANGE_NAME) || getValueNextToLabel_(quoteSheet, "Start Date");
+    const workflowContext = getQuoteWorkflowContext_(startDateRaw);
+    const ss = workflowContext.spreadsheet;
+    ensureSpreadsheetTriggers_(ss);
+    const waitingSheet = ss.getSheetByName(WAITING_SHEET_NAME);
+
+    if (!waitingSheet) {
+      throw new Error(`Sheet '${WAITING_SHEET_NAME}' not found in '${ss.getName()}'.`);
+    }
 
     if (!bookingId || !renterName) {
       addStatus_(statusLog, "Quote setup", false, "Missing Booking ID or Renter Name.");
@@ -815,6 +1064,12 @@ function createQuote(options) {
     }
 
     addStatus_(statusLog, "Quote setup", true, `Booking ${bookingId} for ${renterName}.`);
+    addStatus_(
+      statusLog,
+      "Workflow year",
+      true,
+      `Using '${ss.getName()}' and folder '${workflowContext.yearFolder.getName()}' for ${workflowContext.year} based on start date '${startDateRaw}'.`
+    );
 
     const waitingBookingIdCol = getColumnByHeader_(waitingSheet, 1, "Booking ID");
     if (waitingBookingIdCol) {
@@ -837,7 +1092,7 @@ function createQuote(options) {
       }
     }
 
-    // STEP 2: Copy TemplateRentalAgreement-2026 doc
+    // STEP 2: Copy the rental agreement template into the booking year's folder
     const templateFile = getDriveFileByIdOrName_(QUOTE_TEMPLATE_DOC_ID, QUOTE_TEMPLATE_DOC_NAME);
     if (!templateFile) {
       addStatus_(statusLog, "Template lookup", false, `Template document '${QUOTE_TEMPLATE_DOC_NAME}' not found.`);
@@ -852,25 +1107,17 @@ function createQuote(options) {
     const safeName = renterName.replace(/\s+/g, "");
     newDocName = `quote-${safeBooking}-${safeName}-RentalAgreement`;
 
-    let parentFolder = templateFile.getParents().hasNext()
-      ? templateFile.getParents().next()
-      : DriveApp.getRootFolder();
-
-    let targetFolder = parentFolder.getFoldersByName(QUOTE_TARGET_SUBFOLDER).hasNext()
-      ? parentFolder.getFoldersByName(QUOTE_TARGET_SUBFOLDER).next()
-      : parentFolder.createFolder(QUOTE_TARGET_SUBFOLDER);
-
-    newFile = templateFile.makeCopy(newDocName, targetFolder);
+    newFile = templateFile.makeCopy(newDocName, workflowContext.yearFolder);
     addStatus_(statusLog, "Agreement document", true, `Created ${newDocName}.`);
 
-    // STEP 3: Replace <<namedRangeName>> placeholders from HHRentals-2026IncomeExpenses named ranges
+    // STEP 3: Replace <<namedRangeName>> placeholders from the current quote sheet's named ranges
     const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "MM/dd/yyyy");
     const doc = DocumentApp.openById(newFile.getId());
 
-    const mergeValues = getNamedRangeMergeValues_(ss);
+    const mergeValues = getNamedRangeMergeValues_(sourceSs);
     mergeValues.today = today;
     mergeValues.date = today;
-    mergeValues.outdoorsyRentalCost = getNamedRangeDisplayValue_(ss, "outdoorsyTotalCost");
+    mergeValues.outdoorsyRentalCost = getNamedRangeDisplayValue_(sourceSs, "outdoorsyTotalCost");
 
     replaceNamedRangePlaceholders_(doc, mergeValues);
     doc.saveAndClose();
@@ -935,7 +1182,19 @@ function createQuote(options) {
     const insertRow = finder.getRow();
     waitingSheet.insertRowBefore(insertRow);
     const newRow = insertRow;
-    const nextPaymentValue = quoteData["End Date"] || getMergeValue_(mergeValues, ["endDate", "End Date", "rentalEndDate"]) || "";
+    const bookingStartDateValue = quoteData["Start Date"] || getMergeValue_(mergeValues, ["startDate", "Start Date", "rentalStartDate"]) || "";
+    const outdoorsyNextPaymentDate = quoteType === "Outdoorsy" ? addDays_(bookingStartDateValue, 2) : null;
+    const directNextPaymentDate = quoteType === "Outdoorsy" ? null : addDays_(bookingStartDateValue, -14);
+    const quoteDateDate = parseSheetDate_(today);
+    let nextPaymentValue = today;
+
+    if (outdoorsyNextPaymentDate) {
+      nextPaymentValue = formatSheetDate_(outdoorsyNextPaymentDate);
+    } else if (directNextPaymentDate) {
+      nextPaymentValue = directNextPaymentDate < quoteDateDate
+        ? today
+        : formatSheetDate_(directNextPaymentDate);
+    }
 
     const rowValues = waitingHeaders.map(header => {
       let value = quoteData[header] || "";
@@ -1122,7 +1381,7 @@ function bookReservation(row, options) {
     const oldFileName = `quote-${safeBooking}-${safeName}-RentalAgreement`;
     const newFileName = `${safeBooking}-${safeName}-RentalAgreement`;
 
-    const folder = DriveApp.getFolderById(QUOTE_FOLDER_ID);
+    const folder = getQuoteStorageFolderForDate_(waitingData["Start Date"]).yearFolder;
     const files = folder.getFilesByName(oldFileName);
 
     if (files.hasNext()) {
@@ -1130,7 +1389,7 @@ function bookReservation(row, options) {
       file.setName(newFileName);
       Logger.log(`Renamed file '${oldFileName}' → '${newFileName}'`);
     } else {
-      Logger.log(`File '${oldFileName}' not found in quote folder ID ${QUOTE_FOLDER_ID}`);
+      Logger.log(`File '${oldFileName}' not found in folder '${folder.getName()}'.`);
     }
   } catch (err) {
     followUpWarnings.push("Quote file rename failed: " + err);
@@ -1316,6 +1575,32 @@ function setupCancelColumns() {
   showStatusLog_("Cancel Column Setup", statusLog);
 }
 
+function ensureSpreadsheetTriggers_(ss, triggers) {
+  if (!ss) return;
+
+  const projectTriggers = triggers || ScriptApp.getProjectTriggers();
+  let hasEditTrigger = false;
+  let hasOpenTrigger = false;
+
+  for (const t of projectTriggers) {
+    if (!t.getTriggerSourceId || t.getTriggerSourceId() !== ss.getId()) continue;
+
+    if (t.getHandlerFunction() === "onEditHandler") {
+      hasEditTrigger = true;
+    }
+    if (t.getHandlerFunction() === "onOpen") {
+      hasOpenTrigger = true;
+    }
+  }
+
+  if (!hasEditTrigger) {
+    ScriptApp.newTrigger("onEditHandler").forSpreadsheet(ss).onEdit().create();
+  }
+  if (!hasOpenTrigger) {
+    ScriptApp.newTrigger("onOpen").forSpreadsheet(ss).onOpen().create();
+  }
+}
+
 function safeNoSpaces_(value) {
   return String(value || "").trim().replace(/\s+/g, "");
 }
@@ -1343,26 +1628,29 @@ function getRentalAgreementCandidateNames_(bookingId, renterName) {
   ];
 }
 
-function trashRentalAgreementFiles_(bookingId, renterName) {
-  const folder = DriveApp.getFolderById(QUOTE_FOLDER_ID);
+function markRentalAgreementFilesCancelled_(bookingId, renterName, startDateValue) {
+  const folders = getRentalAgreementSearchFolders_(startDateValue);
   const candidateNames = getRentalAgreementCandidateNames_(bookingId, renterName);
   const seen = {};
-  const trashedFiles = [];
+  const renamedFiles = [];
 
-  candidateNames.forEach(fileName => {
-    const files = folder.getFilesByName(fileName);
-    while (files.hasNext()) {
-      const file = files.next();
-      const fileId = file.getId();
-      if (seen[fileId]) continue;
+  folders.forEach(folder => {
+    candidateNames.forEach(fileName => {
+      const files = folder.getFilesByName(fileName);
+      while (files.hasNext()) {
+        const file = files.next();
+        const fileId = file.getId();
+        if (seen[fileId]) continue;
 
-      seen[fileId] = true;
-      file.setTrashed(true);
-      trashedFiles.push(file.getName());
-    }
+        seen[fileId] = true;
+        const cancelledName = `cancelled-${file.getName()}`;
+        file.setName(cancelledName);
+        renamedFiles.push(cancelledName);
+      }
+    });
   });
 
-  return trashedFiles;
+  return renamedFiles;
 }
 
 function deleteCalendarEventsForBooking_(rowData) {
@@ -1435,9 +1723,9 @@ function cancelReservation(sheet, row, headerRow, options) {
   }
 
   try {
-    const trashedFiles = trashRentalAgreementFiles_(bookingId, renterName);
-    if (trashedFiles.length) {
-      addStatus_(statusLog, "Agreement document", true, `Moved ${trashedFiles.length} matching document(s) to trash.`);
+    const renamedFiles = markRentalAgreementFilesCancelled_(bookingId, renterName, rowData["Start Date"]);
+    if (renamedFiles.length) {
+      addStatus_(statusLog, "Agreement document", true, `Renamed ${renamedFiles.length} matching document(s) with a 'cancelled-' prefix.`);
     } else {
       addStatus_(statusLog, "Agreement document", false, "No matching quote or rental agreement document found.");
     }
@@ -1463,32 +1751,34 @@ function cancelReservation(sheet, row, headerRow, options) {
   }
 }
 
-function findRentalAgreementFile_(bookingId, renterName) {
-  const folder = DriveApp.getFolderById(QUOTE_FOLDER_ID);
-  const safeBooking = safeNoSpaces_(bookingId);
-  const safeName = safeNoSpaces_(renterName);
+function findRentalAgreementFile_(bookingId, renterName, startDateValue) {
+  const folders = getRentalAgreementSearchFolders_(startDateValue);
+  const candidateNames = getRentalAgreementCandidateNames_(bookingId, renterName);
 
-  const fileName = `${safeBooking}-${safeName}-RentalAgreement`;
-  const files = folder.getFilesByName(fileName);
+  for (const folder of folders) {
+    for (const fileName of candidateNames) {
+      const files = folder.getFilesByName(fileName);
 
-  if (files.hasNext()) {
-    const file = files.next();
-    if (files.hasNext()) {
-      Logger.log(`WARNING - Multiple rental agreement files found named '${fileName}'. Using the first match.`);
+      if (files.hasNext()) {
+        const file = files.next();
+        if (files.hasNext()) {
+          Logger.log(`WARNING - Multiple rental agreement files found named '${fileName}' in '${folder.getName()}'. Using the first match.`);
+        }
+        return file;
+      }
     }
-    return file;
   }
 
-  throw new Error(`Rental agreement not found: ${fileName}`);
+  throw new Error(`Rental agreement not found for booking ${bookingId} renter ${renterName}.`);
 }
 
-function createInvoiceFromTemplate_(bookingId, renterName) {
+function createInvoiceFromTemplate_(bookingId, renterName, startDateValue) {
   const templateFile = getDriveFileByIdOrName_(INVOICE_TEMPLATE_ID, INVOICE_TEMPLATE_NAME);
   if (!templateFile) {
     throw new Error(`Invoice template '${INVOICE_TEMPLATE_NAME}' not found.`);
   }
 
-  const folder = DriveApp.getFolderById(QUOTE_FOLDER_ID);
+  const folder = getQuoteStorageFolderForDate_(startDateValue).yearFolder;
 
   const safeBooking = safeNoSpaces_(bookingId);
   const safeName = safeNoSpaces_(renterName);
@@ -1931,7 +2221,7 @@ function generateInvoice(row, options) {
 
     addStatus_(statusLog, "Invoice setup", true, `Booking ${bookingId} for ${renterName}.`);
 
-    const agreementFile = findRentalAgreementFile_(bookingId, renterName);
+    const agreementFile = findRentalAgreementFile_(bookingId, renterName, bookingData["Start Date"]);
     addStatus_(statusLog, "Rental agreement", true, `Found ${agreementFile.getName()}.`);
 
     const agreementFields = extractFieldsFromAgreementDoc_(agreementFile);
@@ -1940,7 +2230,7 @@ function generateInvoice(row, options) {
     const paymentData = getPaymentsForBooking_(ss, bookingId);
     addStatus_(statusLog, "Payments", true, `Found ${paymentData.count} payment row(s). Total paid: ${formatMoney_(paymentData.totalPaid)}.`);
 
-    const invoice = createInvoiceFromTemplate_(bookingId, renterName);
+    const invoice = createInvoiceFromTemplate_(bookingId, renterName, bookingData["Start Date"]);
     addStatus_(statusLog, "Invoice file", true, `Created ${invoice.name}${invoice.replacedCount ? ` after replacing ${invoice.replacedCount} existing invoice file(s)` : ""}.`);
 
     const textExtractedInvoiceFields = extractInvoiceFieldsFromAgreementText_(agreementFile);
@@ -2258,32 +2548,35 @@ function onEditHandler(e) {
  * spreadsheet and the shared Contacts spreadsheet.
  */
 function setupOnEditTrigger() {
-  const spreadsheets = [
-    SpreadsheetApp.getActive(),
-    SpreadsheetApp.openById(CONTACTS_SPREADSHEET_ID)
-  ];
+  const spreadsheets = [];
+  const seenSpreadsheetIds = {};
   const triggers = ScriptApp.getProjectTriggers();
 
+  function addSpreadsheet_(ss) {
+    if (!ss) return;
+
+    const spreadsheetId = ss.getId();
+    if (seenSpreadsheetIds[spreadsheetId]) return;
+
+    seenSpreadsheetIds[spreadsheetId] = true;
+    spreadsheets.push(ss);
+  }
+
+  try {
+    addSpreadsheet_(SpreadsheetApp.getActive());
+    addSpreadsheet_(SpreadsheetApp.openById(CONTACTS_SPREADSHEET_ID));
+
+    const workflowSpreadsheets = getAllWorkflowSpreadsheets_();
+    workflowSpreadsheets.forEach(addSpreadsheet_);
+  } catch (e) {
+    Logger.log("setupOnEditTrigger could not discover all workflow spreadsheets: " + e);
+  }
+
   for (const ss of spreadsheets) {
-    let hasEditTrigger = false;
-    let hasOpenTrigger = false;
-
-    for (const t of triggers) {
-      if (!t.getTriggerSourceId || t.getTriggerSourceId() !== ss.getId()) continue;
-
-      if (t.getHandlerFunction() === "onEditHandler") {
-        hasEditTrigger = true;
-      }
-      if (t.getHandlerFunction() === "onOpen") {
-        hasOpenTrigger = true;
-      }
-    }
-
-    if (!hasEditTrigger) {
-      ScriptApp.newTrigger("onEditHandler").forSpreadsheet(ss).onEdit().create();
-    }
-    if (!hasOpenTrigger) {
-      ScriptApp.newTrigger("onOpen").forSpreadsheet(ss).onOpen().create();
+    try {
+      ensureSpreadsheetTriggers_(ss, triggers);
+    } catch (e) {
+      Logger.log(`setupOnEditTrigger could not add trigger for '${ss.getName()}': ${e}`);
     }
   }
 }
