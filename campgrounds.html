@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Happy Hooker Rentals - Recommended Campgrounds</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background-color: #f9f9f9;
+      color: #222;
+      margin: 0;
+      padding: 0;
+    }
+
+    header {
+      background-color: #004aad;
+      color: white;
+      text-align: center;
+      padding: 1.5rem;
+      position: relative;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 1.8rem;
+    }
+
+    .header-logo {
+      position: static;
+      display: block;
+      margin: 10px auto 0;
+      transform: none;
+      height: 170px;
+    }
+
+    .campgrounds-container {
+      max-width: 1100px;
+      margin: 2rem auto;
+      background: white;
+      border-radius: 12px;
+      padding: 2rem;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+    }
+
+    .intro {
+      margin-bottom: 1.5rem;
+      line-height: 1.6;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 900px;
+    }
+
+    th,
+    td {
+      border: 1px solid #d7d7d7;
+      padding: 0.9rem;
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background-color: #004aad;
+      color: white;
+    }
+
+    tr:nth-child(even) td {
+      background-color: #f5f8ff;
+    }
+
+    td a {
+      color: #004aad;
+    }
+
+    td a:hover {
+      color: #003080;
+    }
+
+    .reserve-button {
+      display: inline-block;
+      margin-top: 0.75rem;
+      background-color: #004aad;
+      color: white;
+      padding: 0.55rem 0.9rem;
+      border-radius: 8px;
+      text-decoration: none;
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+
+    .reserve-button:hover {
+      background-color: #003080;
+      color: white;
+    }
+
+    .feature-list {
+      margin: 0;
+      padding-left: 1.1rem;
+    }
+
+    .feature-list li + li {
+      margin-top: 0.3rem;
+    }
+
+    .back-button {
+      display: inline-block;
+      background-color: #004aad;
+      color: white;
+      padding: 0.75rem 1.25rem;
+      border-radius: 8px;
+      text-decoration: none;
+      transition: background 0.3s;
+    }
+
+    .back-button:hover {
+      background-color: #003080;
+    }
+
+    .back-container {
+      text-align: center;
+      margin: 2rem 0;
+    }
+
+    @media (max-width: 768px) {
+      .header-logo {
+        height: 80px;
+      }
+
+      body header h1 {
+        font-size: 0.95rem;
+      }
+    }
+
+    @media (max-width: 600px) {
+      .campgrounds-container {
+        margin: 1rem;
+        padding: 1.25rem;
+      }
+
+      .header-logo {
+        height: 80px;
+      }
+
+      body header h1 {
+        font-size: 0.95rem;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>Recommended Campgrounds</h1>
+    <img src="./HappyHookerGnomeLogo.png" alt="Happy Hooker Gnome" class="header-logo">
+  </header>
+
+  <main class="campgrounds-container">
+    <p class="intro">
+      The first campgrounds listed are within roughly 25 miles of Milford, New Hampshire, and a few farther-away
+      favorites are included as well. Distances below are approximate, and campground details should always be
+      confirmed directly with the campground before booking.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Campground</th>
+            <th>Location</th>
+            <th>Contact</th>
+            <th>Features</th>
+            <th>Checkin/Checkout</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <a href="https://fsrvp.com/" target="_blank" rel="noopener noreferrer">Field &amp; Stream RV Park</a>
+            </td>
+            <td>Brookline, NH (about 8 miles from Milford, NH)</td>
+            <td>
+              <a href="tel:+16036734677">(603) 673-4677</a><br>
+              <a href="mailto:info@fsrvp.com">info@fsrvp.com</a><br>
+              <a href="https://book.camphappygrounds.com/campgrounds/field-and-stream" target="_blank" rel="noopener noreferrer" class="reserve-button">Reserve a Site</a>
+            </td>
+            <td>
+              <ul class="feature-list">
+                <li>Wading pond and beach area</li>
+                <li>Kayak access to Lake Potanipo</li>
+                <li>Fishing pond and stream</li>
+                <li>Large off-leash dog park</li>
+                <li>Full hook-up RV sites</li>
+              </ul>
+            </td>
+            <td>Check-in: 1:00 PM<br>Checkout: 12:00 PM</td>
+          </tr>
+          <tr>
+            <td>
+              <a href="https://www.friendlybeaver.com/" target="_blank" rel="noopener noreferrer">Friendly Beaver Campground</a>
+            </td>
+            <td>New Boston, NH (about 11 miles from Milford, NH)</td>
+            <td>
+              <a href="tel:+16034875570">(603) 487-5570</a><br>
+              <a href="mailto:info@friendlybeaver.com">info@friendlybeaver.com</a><br>
+              <a href="https://www.campspot.com/book/friendlybeaver" target="_blank" rel="noopener noreferrer" class="reserve-button">Reserve a Site</a>
+            </td>
+            <td>
+              <ul class="feature-list">
+                <li>Heated indoor pool open year-round</li>
+                <li>Outdoor pools and splash areas</li>
+                <li>Petting farm</li>
+                <li>Beaver Hut Cafe</li>
+                <li>Large campground store</li>
+              </ul>
+            </td>
+            <td>Check-in: 1:30 PM<br>Checkout: 1:00 PM</td>
+          </tr>
+          <tr>
+            <td>
+              <a href="https://www.nhstateparks.org/find-parks-trails/greenfield-state-park" target="_blank" rel="noopener noreferrer">Greenfield State Park</a>
+            </td>
+            <td>Greenfield, NH (about 15 miles from Milford, NH)</td>
+            <td>
+              <a href="tel:+16035473497">(603) 547-3497</a><br>
+              <a href="mailto:nhstateparkscamping@dncr.nh.gov">nhstateparkscamping@dncr.nh.gov</a><br>
+              <a href="https://newhampshirestateparks.reserveamerica.com/camping/greenfield-state-park/r/campgroundDetails.do?contractCode=NH&amp;parkId=270027&amp;_gl=1*2kvtoe*_gcl_au*NTYyOTQzNDQ5LjE3ODYwMzY4MjQ.*_ga*MTc0NjM4Nzk2Mi4xNzg2MDM2ODI0*_ga_8V9GDK3SM7*czE3ODYwMzY4MjQkbzEkZzEkdDE3ODYwMzY5NzEkajYwJGwwJGgw" target="_blank" rel="noopener noreferrer" class="reserve-button">Reserve a Site</a>
+            </td>
+            <td>
+              <ul class="feature-list">
+                <li>Otter Lake swimming beach</li>
+                <li>Kayak and canoe rentals</li>
+                <li>Walking trails</li>
+                <li>Playground and picnic beach</li>
+                <li>Pet-friendly campground</li>
+              </ul>
+            </td>
+            <td>Check-in: 1:00 PM<br>Checkout: 11:00 AM</td>
+          </tr>
+          <tr>
+            <td>
+              <a href="https://www.coldspringscampresort.com/" target="_blank" rel="noopener noreferrer">Cold Springs Camp Resort</a>
+            </td>
+            <td>Weare, NH (about 20 miles from Milford, NH)</td>
+            <td>
+              <a href="tel:+16035292528">(603) 529-2528</a><br>
+              <a href="mailto:info@coldspringscampresort.com">info@coldspringscampresort.com</a><br>
+              <a href="https://www.campspot.com/book/coldspringscampresort?_gl=1*1fzx0d8*_ga*MTEwOTE0MTEyNS4xNzg2MDY1NTkx*_ga_0142EJ3RN9*czE3ODYwNjU1OTAkbzEkZzAkdDE3ODYwNjU1OTAkajYwJGwwJGgwJGRqZW43RHNsMlM4SF9UUHlSdXlyaUtnWmNLeXVVVEJkZjBR" target="_blank" rel="noopener noreferrer" class="reserve-button">Reserve a Site</a>
+            </td>
+            <td>
+              <ul class="feature-list">
+                <li>Five pools and two waterslides</li>
+                <li>Two hot tubs</li>
+                <li>Dog parks</li>
+                <li>Beach area and fishing pond</li>
+                <li>Basketball and volleyball courts</li>
+              </ul>
+            </td>
+            <td>Check-in: 1:00 PM<br>Checkout: 11:00 AM</td>
+          </tr>
+          <tr>
+            <td>
+              <a href="https://spaciousskiescampgrounds.com/seven-maples/" target="_blank" rel="noopener noreferrer">Spacious Skies Seven Maples</a>
+            </td>
+            <td>Hancock, NH (about 22 miles from Milford, NH)</td>
+            <td>
+              <a href="tel:+16035253321">(603) 525-3321</a><br>
+              <a href="mailto:info@campatsevenmaples.com">info@campatsevenmaples.com</a><br>
+              <a href="https://camp.spaciousskiescampgrounds.com/seven-maples/" target="_blank" rel="noopener noreferrer" class="reserve-button">Reserve a Site</a>
+            </td>
+            <td>
+              <ul class="feature-list">
+                <li>Heated pool with waterslides and spa</li>
+                <li>Stocked trout fishing pond</li>
+                <li>Kayak rentals</li>
+                <li>Boat launch access to Norway Pond</li>
+                <li>Arcade, playgrounds, and rail trail access</li>
+              </ul>
+            </td>
+            <td>Check-in: 2:00 PM<br>Checkout: 11:00 AM</td>
+          </tr>
+          <tr>
+            <td>
+              <a href="https://www.mass.gov/locations/salisbury-beach-state-reservation" target="_blank" rel="noopener noreferrer">Salisbury Beach State Reservation</a>
+            </td>
+            <td>Salisbury, MA (about 45 miles from Milford, NH)</td>
+            <td>
+              <a href="tel:+19784624481">(978) 462-4481</a><br>
+              <a href="mailto:salisbury.beach@state.ma.us">salisbury.beach@state.ma.us</a><br>
+              <a href="https://massdcrcamping.reserveamerica.com/camping/salisbury-beach-state-reservation/r/campgroundDetails.do?contractCode=MA&amp;parkId=32619" target="_blank" rel="noopener noreferrer" class="reserve-button">Reserve a Site</a>
+            </td>
+            <td>
+              <ul class="feature-list">
+                <li>3.8 miles of ocean coastline</li>
+                <li>12 minutes from Hampton Beach</li>
+                <li>Two boat ramps on the Merrimack River</li>
+                <li>Swimming, boating, and fishing</li>
+                <li>Boardwalk, playground, and scenic viewing areas</li>
+                <li>RV hookups, showers, and dump station</li>
+              </ul>
+            </td>
+            <td>Check-in: 1:00 PM<br>Checkout: 11:00 AM</td>
+          </tr>
+          <tr>
+            <td>
+              <a href="https://papoosepondcamping.com/" target="_blank" rel="noopener noreferrer">Papoose Pond Family Camping Resort</a>
+            </td>
+            <td>Waterford, ME (about 100 miles from Milford, NH)</td>
+            <td>
+              <a href="tel:+12075834470">(207) 583-4470</a><br>
+              <a href="https://papoosepondcamping.com/contact-directions/" target="_blank" rel="noopener noreferrer">Contact form</a><br>
+              <a href="https://www.campspot.com/book/papoosepondcamping" target="_blank" rel="noopener noreferrer" class="reserve-button">Reserve a Site</a>
+            </td>
+            <td>
+              <ul class="feature-list">
+                <li>Half-mile sandy beach on Papoose Pond</li>
+                <li>Heated swimming pool</li>
+                <li>Canoes, kayaks, paddleboards, and rowboats</li>
+                <li>Mini-golf, pickleball, and three playgrounds</li>
+                <li>Antique carousel and family activities</li>
+              </ul>
+            </td>
+            <td>Check-in: 12:00 PM<br>Checkout: 11:00 AM</td>
+          </tr>
+          <tr>
+            <td>
+              <a href="https://sacoriverfamilycamping.com/" target="_blank" rel="noopener noreferrer">Saco River Family Camping</a>
+            </td>
+            <td>North Conway, NH (about 110 miles from Milford, NH)</td>
+            <td>
+              <a href="tel:+16033563360">(603) 356-3360</a><br>
+              <a href="mailto:info@sacoriverfamilycamping.com">info@sacoriverfamilycamping.com</a><br>
+              <a href="https://booking.staylist.app/sacoriver" target="_blank" rel="noopener noreferrer" class="reserve-button">Reserve a Site</a>
+            </td>
+            <td>
+              <ul class="feature-list">
+                <li>Direct Saco River access and private beach</li>
+                <li>Heated pool</li>
+                <li>Tube and kayak rentals</li>
+                <li>Two large dog parks</li>
+                <li>Gem mining, playgrounds, and wagon rides</li>
+              </ul>
+            </td>
+            <td>Check-in: 2:00 PM<br>Checkout: 11:00 AM</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+
+  <div class="back-container">
+    <a href="index.html" class="back-button">&larr; Back to Main Page</a>
+  </div>
+</body>
+</html>
