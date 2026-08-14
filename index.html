@@ -161,6 +161,24 @@
       box-shadow: 0 6px 18px rgba(11, 26, 43, 0.06);
     }
 
+    .sale-preview-img {
+      width: 100%;
+      max-height: 320px;
+      object-fit: cover;
+      border-radius: 12px;
+      box-shadow: 0 6px 18px rgba(11, 26, 43, 0.12);
+    }
+
+    .sale-pill {
+      display: inline-block;
+      background: #b22222;
+      color: #fff;
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
     /* Responsive text sizing for mobile */
     @media (max-width: 992px) {
       body {
@@ -279,6 +297,31 @@
 			</div>
 		</div>
 	</div>
+	<div class="card">
+      <div class="row align-items-center g-4">
+        <div class="col-lg-7">
+          <span class="sale-pill">Now For Sale</span>
+          <h3>2015 Starcraft AR-One 17RD</h3>
+          <p>
+            I am selling this lightweight couples camper and have posted a full photo gallery,
+            specs, and contact details on its dedicated sale page.
+          </p>
+          <p class="small">
+            Sleeps up to 4 | Bathroom with tub/shower | Heat and A/C | Power awning
+          </p>
+          <a class="btn" href="./forSale/2015Starcraft/index.html">View Camper For Sale</a>
+        </div>
+        <div class="col-lg-5">
+          <a href="./forSale/2015Starcraft/index.html">
+            <img
+              src="./forSale/2015Starcraft/ext3.jpg"
+              alt="2015 Starcraft AR-One 17RD exterior view"
+              class="sale-preview-img"
+            >
+          </a>
+        </div>
+      </div>
+    </div>
 	<div class="card">
       <h3>How Delivery Works</h3>
       <p class="small">
