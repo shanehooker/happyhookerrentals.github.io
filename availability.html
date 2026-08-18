@@ -97,10 +97,12 @@
       const backendUrl = "https://script.google.com/macros/s/AKfycbz_sagf02qOlIKf2eGC7an1sq9bqbLgEx03G890blnLMERuITbvFXYD2W556r_iI2E/exec";
 
       // Set header title
-      const camperTitle =
-        camper === "2022"
-          ? "Availability for 25' 2022 Apex Nano (sleeps 6)"
-          : "Availability for 32' 2018 Freedom Express (sleeps 10)";
+      const camperTitles = {
+        "2022": "Availability for 25' 2022 Apex Nano (sleeps 6)",
+        "2018": "Availability for 32' 2018 Freedom Express (sleeps 10)",
+        "2015": "Availability for 2015 Starcraft (sleeps 4)"
+      };
+      const camperTitle = camperTitles[camper] || "Camper Availability";
       document.getElementById("calendarTitle").textContent = camperTitle;
 
       try {

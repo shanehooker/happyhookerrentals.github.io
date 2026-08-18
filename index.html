@@ -179,6 +179,45 @@
       margin-bottom: 12px;
     }
 
+    .promo-special {
+      background: linear-gradient(135deg, #fff6c9 0%, #ffe08a 55%, #ffd166 100%);
+      border: 3px solid #004aad;
+      box-shadow: 0 12px 30px rgba(0, 74, 173, 0.14);
+      overflow: hidden;
+    }
+
+    .promo-special h3 {
+      font-size: 2rem;
+      color: #00357a;
+      margin-bottom: 8px;
+    }
+
+    .promo-badge {
+      display: inline-block;
+      background: #00357a;
+      color: #fff;
+      padding: 10px 16px;
+      border-radius: 999px;
+      font-weight: 800;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      margin-bottom: 14px;
+    }
+
+    .promo-special ul {
+      margin-bottom: 0;
+      padding-left: 1.25rem;
+    }
+
+    .promo-special li {
+      margin-bottom: 10px;
+    }
+
+    .promo-special a {
+      color: #00357a;
+      font-weight: 700;
+    }
+
     /* Responsive text sizing for mobile */
     @media (max-width: 992px) {
       body {
@@ -193,6 +232,9 @@
       }
       p, li, a, button, input, select {
         font-size: 1rem;
+      }
+      .promo-special h3 {
+        font-size: 1.7rem;
       }
     }
 
@@ -228,6 +270,13 @@
         height: auto;
         max-height: 320px;
       }
+      .promo-special {
+        padding: 20px 16px;
+      }
+      .promo-badge {
+        width: 100%;
+        text-align: center;
+      }
     }
   </style>
 </head>
@@ -247,6 +296,21 @@
 	Browse the camper options and request a quote for your next adventure.
   </div>
   <div class="container my-5">
+    <div class="card promo-special mb-4">
+      <span class="promo-badge">Back to School Special</span>
+      <h3>Save $120 on a late-summer weekend getaway</h3>
+      <ul>
+        <li>Must book <strong>Friday, August 28 through Sunday, August 30</strong>.</li>
+        <li>Valid for either the <strong>2015 17' Starcraft AR-One</strong> or the <strong>2022 25' Coachmen</strong>.</li>
+        <li>Stay must be at a <strong>full hookup site</strong> at
+          <a href="https://www.autumnhillscampground.com/" target="_blank" rel="noopener">Autumn Hills Campground</a>
+          or
+          <a href="https://www.coldspringscampresort.com/" target="_blank" rel="noopener">Cold Springs Camp Resort</a>
+          in Weare, NH.
+        </li>
+        <li>Contact me at <a href="tel:6033205247">603-320-5247</a> or email <a href="mailto:happyhookerrentals@gmail.com">happyhookerrentals@gmail.com</a>.</li>
+      </ul>
+    </div>
     <div class="card">
 		<div class="row-mb-5">
 			<h3>25' 2022 Coachmen Apex Nano</h3>
@@ -309,7 +373,11 @@
           <p class="small">
             Sleeps up to 4 | Bathroom with tub/shower | Heat and A/C | Power awning
           </p>
-          <a class="btn" href="./forSale/2015Starcraft/index.html">View Camper For Sale</a>
+          <div class="pricing">
+            <div class="price">$100/night<br>$630/week</div>
+            <a class="btn" href="./forSale/2015Starcraft/index.html">View Camper For Sale</a>
+            <a class="btn quote" onclick="openQuotePage('2015')">Request Quote</a>
+          </div>
         </div>
         <div class="col-lg-5">
           <a href="./forSale/2015Starcraft/index.html">
