@@ -1,0 +1,282 @@
+{
+  "version": 1,
+  "business": {
+    "name": "Happy Hooker Rentals",
+    "homeAddress": "17 Lorisa Ln. Milford, NH 03055",
+    "contactEmail": "happyhookerrentals@gmail.com",
+    "calendar": {
+      "name": "Happy Hooker Rentals",
+      "id": "647d50cd910f97384c20ba658a3a4fc3f9a6c4970a4254b227cba66b285a8fca@group.calendar.google.com"
+    }
+  },
+  "googleAssets": {
+    "topLevelFolder": {
+      "name": "Happy Hooker Rentals",
+      "id": "1tF7OiUGS9c4Ebr5oeaeELcZMz4jpIlRh"
+    },
+    "quoteFolder": {
+      "name": "Rental Contracts and Invoices",
+      "id": "1koKnYwhSzl_HQuB33WAI5JrN4R_AqDmG"
+    },
+    "contactsSpreadsheet": {
+      "sheetName": "Contacts",
+      "id": "1GVOBCWJyu-61WxOjqkPDQg5jDE6RNtr4SmwVgMimxas"
+    },
+    "templates": {
+      "quoteAgreement": {
+        "name": "TemplateRentalAgreement-2026",
+        "id": "1mNtbdwhPLFu4dgZFdu-Bq_A0m1y6DIZ7baR_MhhucC4"
+      },
+      "quoteEmail": {
+        "name": "TemplateQuoteEmail",
+        "id": "1g3W263tNCGDmhQhP6RNRcx4WS55Hi4h32NlQgQuYwKs"
+      },
+      "invoice": {
+        "name": "TemplateInvoice-2026",
+        "id": "1vao0m2pUg6sBkz5PPtW9B9Q81Zo8CAGUQx_KhO9XVL0"
+      }
+    }
+  },
+  "delivery": {
+    "pricePerMileOneWay": 2.1,
+    "minimumFee": 150,
+    "drivers": [
+      {
+        "id": "shane",
+        "name": "Shane",
+        "roundTripMpg": 10.5
+      },
+      {
+        "id": "aaron",
+        "name": "Aaron",
+        "roundTripMpg": 17
+      }
+    ]
+  },
+  "pricingRules": {
+    "weeklyThresholdNights": 7,
+    "nhMealsRoomsTaxPct": 8.5,
+    "depositAmount": 50,
+    "paymentSchedule": {
+      "secondPaymentDaysBeforeStart": 14,
+      "finalPaymentDaysBeforeStart": 1
+    },
+    "cancellation": {
+      "fullRefundDaysBeforeStart": 14,
+      "partialRefundDaysBeforeStart": 1,
+      "partialRefundPctExcludingDeposit": 50,
+      "depositIsNonRefundable": true
+    }
+  },
+  "rateTiers": [
+    {
+      "id": "base",
+      "label": "base",
+      "discountPct": {
+        "nightly": 0,
+        "weekly": 10
+      }
+    },
+    {
+      "id": "return-customer",
+      "label": "return customer",
+      "discountPct": {
+        "nightly": 5,
+        "weekly": 15
+      }
+    },
+    {
+      "id": "friends-family",
+      "label": "friends & family",
+      "discountPct": {
+        "nightly": 30,
+        "weekly": 30
+      }
+    },
+    {
+      "id": "crazy-friend",
+      "label": "crazy friend",
+      "discountPct": {
+        "nightly": 60,
+        "weekly": 60
+      }
+    }
+  ],
+  "holidays": [
+    {
+      "id": "none",
+      "label": "None",
+      "surchargePct": 0,
+      "description": ""
+    },
+    {
+      "id": "memorial-day",
+      "label": "Memorial Day",
+      "surchargePct": 5,
+      "description": "*Memorial Day rate +5%"
+    },
+    {
+      "id": "fourth-of-july",
+      "label": "4th of July",
+      "surchargePct": 5,
+      "description": "*4th of July rate +5%"
+    },
+    {
+      "id": "labor-day",
+      "label": "Labor Day",
+      "surchargePct": 5,
+      "description": "*Labor Day rate +5%"
+    },
+    {
+      "id": "columbus-day",
+      "label": "Columbus Day",
+      "surchargePct": 2.5,
+      "description": "*Columbus Day rate +2.5%"
+    }
+  ],
+  "campers": [
+    {
+      "id": "coachmen-apex-nano-2022",
+      "websiteKey": "2022",
+      "shortName": "2022 25' Coachmen",
+      "fullName": "2022 Coachmen Apex Nano 25' camper",
+      "dailyBaseRate": 125,
+      "status": {
+        "rentable": true,
+        "forSale": false,
+        "active": true
+      },
+      "website": {
+        "rentalVisible": true,
+        "saleVisible": false,
+        "galleryPath": "./2022 25' Coachmen Apex Nano/",
+        "quotePath": "quote.html?camper=2022",
+        "availabilityPath": "availability.html?camper=2022"
+      },
+      "details": {
+        "sleeps": 6,
+        "summary": "Queen bed & bunks | Outdoor refrigerator and grill | Slideout & awning"
+      }
+    },
+    {
+      "id": "coachmen-freedom-express-2018",
+      "websiteKey": "2018",
+      "shortName": "2018 32' Coachmen",
+      "fullName": "2018 Coachmen Freedom Liberty Express 32' camper",
+      "dailyBaseRate": 135,
+      "status": {
+        "rentable": true,
+        "forSale": false,
+        "active": true
+      },
+      "website": {
+        "rentalVisible": true,
+        "saleVisible": false,
+        "galleryPath": "./2018 32' Coachman Freedom Express Liberty Edition/",
+        "quotePath": "quote.html?camper=2018",
+        "availabilityPath": "availability.html?camper=2018"
+      },
+      "details": {
+        "sleeps": 8,
+        "summary": "Queen bed & bunks | Family layout | Fireplace and rock wall | Slideout & awning"
+      }
+    },
+    {
+      "id": "starcraft-ar-one-2015",
+      "websiteKey": "2015",
+      "shortName": "2015 20' Starcraft",
+      "fullName": "2015 Starcraft AR-One 20' camper",
+      "dailyBaseRate": 110,
+      "status": {
+        "rentable": false,
+        "forSale": true,
+        "active": true
+      },
+      "website": {
+        "rentalVisible": false,
+        "saleVisible": true,
+        "salePagePath": "./forSale/2015Starcraft/index.html",
+        "salePreviewImage": "./forSale/2015Starcraft/ext3.jpg"
+      },
+      "details": {
+        "sleeps": 4,
+        "summary": "Lightweight couples camper with bathroom, heat, A/C, and power awning"
+      },
+      "saleListing": {
+        "price": 6500,
+        "terms": "OBRO",
+        "location": "Milford, NH"
+      }
+    }
+  ],
+  "fees": [
+    {
+      "id": "none",
+      "label": "none",
+      "amount": 0,
+      "description": ""
+    },
+    {
+      "id": "dumping-fee",
+      "label": "dumping fee",
+      "amount": 40,
+      "description": "fee applied for emptying grey/black tanks on sites without septic"
+    },
+    {
+      "id": "prep-fee",
+      "label": "prep fee",
+      "amount": 20,
+      "description": "cost of cleaning and restocking camper with items"
+    },
+    {
+      "id": "other",
+      "label": "other",
+      "amount": 0,
+      "description": "extra charge for 3rd party delivery"
+    }
+  ],
+  "addOns": [
+    {
+      "id": "none",
+      "label": "none",
+      "amount": 0,
+      "description": ""
+    },
+    {
+      "id": "2-kayaks",
+      "label": "2 kayaks",
+      "amount": 40,
+      "description": "2 single adult kayaks with paddles"
+    },
+    {
+      "id": "campsite",
+      "label": "campsite",
+      "amount": 0,
+      "description": "campsite reserved for stay"
+    },
+    {
+      "id": "easy-up",
+      "label": "easy up",
+      "amount": 10,
+      "description": "a 10x10 easy up"
+    },
+    {
+      "id": "generator",
+      "label": "generator",
+      "amount": 90,
+      "description": "generator @$30/day or $150/week"
+    },
+    {
+      "id": "light-me-up",
+      "label": "light me up",
+      "amount": 25,
+      "description": "decorative lights stringed up at your campsite"
+    },
+    {
+      "id": "wood-bundles",
+      "label": "wood bundles",
+      "amount": 8,
+      "description": "bundle of wood dropped off at your campsite"
+    }
+  ]
+}
