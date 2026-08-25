@@ -151,6 +151,9 @@ const CONTACTS_SPREADSHEET_ID = "1GVOBCWJyu-61WxOjqkPDQg5jDE6RNtr4SmwVgMimxas";
 const CONTACTS_SHEET_NAME = "Contacts";
 const BOOKINGS_SHEET_NAME = "Bookings";
 const INCOME_SHEET_NAME = "Income";
+const ENTRY_INSERT_SHEET_NAMES = ["Income", "Expenses", "Mileage"];
+const ENTRY_INSERT_PLACEHOLDER = "{{insertRow}}";
+const ENTRY_INSERT_CHECKBOX_COLUMN = 2;
 const INVOICE_COLUMN_HEADER = "Invoice";
 const CANCEL_COLUMN_HEADER = "Cancel";
 const WAITING_HEADER_ROW = 1;
@@ -730,6 +733,7 @@ function addSpreadsheetMenu_() {
       .addItem("Create Email", "createSelectedContactsEmail")
       .addSeparator()
       .addItem("Setup Quote Checkbox", "setupQuoteCheckbox")
+      .addItem("Setup Entry Row Checkboxes", "setupEntryRowCheckboxes")
       .addItem("Setup Contacts Selection", "setupContactsSelection")
       .addItem("Setup Triggers", "setupOnEditTrigger")
       .addToUi();
@@ -1684,6 +1688,66 @@ function setupQuoteCheckbox() {
   quoteSheet.getRange(QUOTE_TRIGGER_STATUS_A1).setValue("Ready").setBackground("#d9ead3");
 
   SpreadsheetApp.getUi().alert(`Quote checkbox is ready in ${QUOTE_SHEET_NAME}!${QUOTE_TRIGGER_CHECKBOX_A1}.`);
+}
+
+/**
+ * Sets up one Insert Row checkbox on each entry sheet. The checkbox remains on
+ * the {{insertRow}} template row, which moves down after every inserted row.
+ */
+function setupEntryRowCheckboxes() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const configuredSheets = [];
+
+  ENTRY_INSERT_SHEET_NAMES.forEach(sheetName => {
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet) throw new Error(`Sheet '${sheetName}' not found.`);
+
+    const placeholder = findExactCell_(sheet, ENTRY_INSERT_PLACEHOLDER);
+    if (!placeholder) throw new Error(`Cannot find ${ENTRY_INSERT_PLACEHOLDER} on '${sheetName}'.`);
+
+    sheet.getRange(placeholder.getRow(), ENTRY_INSERT_CHECKBOX_COLUMN)
+      .setDataValidation(buildCheckboxRule_())
+      .setValue(false);
+    configuredSheets.push(`${sheetName}!B${placeholder.getRow()}`);
+  });
+
+  SpreadsheetApp.getUi().alert(`Insert Row checkboxes are ready: ${configuredSheets.join(", ")}.`);
+}
+
+/**
+ * Inserts a data row immediately before the {{insertRow}} template row.
+ * The preceding row supplies formatting; the template row supplies default
+ * values and formulas. Column A is then set to today's date.
+ */
+function insertEntryRowAtPlaceholder_(sheet) {
+  const placeholder = findExactCell_(sheet, ENTRY_INSERT_PLACEHOLDER);
+  if (!placeholder) throw new Error(`Cannot find ${ENTRY_INSERT_PLACEHOLDER} on '${sheet.getName()}'.`);
+
+  const placeholderRow = placeholder.getRow();
+  if (placeholderRow <= 1) throw new Error(`Cannot insert above row ${placeholderRow} on '${sheet.getName()}'.`);
+
+  const lastColumn = sheet.getLastColumn();
+  const defaultsRange = sheet.getRange(placeholderRow, 1, 1, lastColumn);
+  const defaultValues = defaultsRange.getValues();
+  const defaultFormulas = defaultsRange.getFormulas();
+  sheet.insertRowBefore(placeholderRow);
+
+  const newRow = sheet.getRange(placeholderRow, 1, 1, lastColumn);
+  const formatSource = sheet.getRange(placeholderRow - 1, 1, 1, lastColumn);
+  const validationSource = sheet.getRange(placeholderRow + 1, 1, 1, lastColumn);
+
+  formatSource.copyTo(newRow, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+  // Copy the native validation layer so dropdown chip colors are retained.
+  validationSource.copyTo(newRow, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
+  newRow.setValues(defaultValues);
+
+  defaultFormulas[0].forEach((formula, columnIndex) => {
+    if (formula) newRow.getCell(1, columnIndex + 1).setFormula(formula);
+  });
+
+  newRow.getCell(1, 1).setValue(new Date());
+  newRow.getCell(1, ENTRY_INSERT_CHECKBOX_COLUMN).setValue(0).clearDataValidations();
+  sheet.getRange(placeholderRow + 1, ENTRY_INSERT_CHECKBOX_COLUMN).setValue(false);
 }
 
 function setQuoteTriggerStatus_(message, backgroundColor) {
@@ -2682,6 +2746,16 @@ function onEditHandler(e) {
     }
 
     if (e.value !== "TRUE") return;
+
+    if (ENTRY_INSERT_SHEET_NAMES.indexOf(sheetName) !== -1) {
+      if (editedCol !== ENTRY_INSERT_CHECKBOX_COLUMN) return;
+
+      const placeholder = findExactCell_(sheet, ENTRY_INSERT_PLACEHOLDER);
+      if (!placeholder || editedRow !== placeholder.getRow()) return;
+
+      insertEntryRowAtPlaceholder_(sheet);
+      return;
+    }
 
     if (sheetName === QUOTE_SHEET_NAME) {
       if (range.getA1Notation() !== QUOTE_TRIGGER_CHECKBOX_A1) return;
