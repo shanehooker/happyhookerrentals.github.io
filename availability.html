@@ -79,35 +79,39 @@
   </header>
 
   <div class="back-container">
-    <button class="go-back-btn" onclick="goBack()">← Go Back and Request Quote</button>
+    <button class="go-back-btn" id="goBackButton" type="button">← Go Back and Request Quote</button>
   </div>
 
+  <div id="availabilityStatus" class="container text-center" role="status"></div>
   <div id="calendar"></div>
 
+  <script src="metadata.js"></script>
   <script>
-    function goBack() {
-      const params = new URLSearchParams(window.location.search);
-      const camper = params.get("camper") || "";
-      window.location.href = `quote.html?camper=${encodeURIComponent(camper)}`;
-    }
+    "use strict";
 
     document.addEventListener("DOMContentLoaded", async () => {
       const params = new URLSearchParams(window.location.search);
-      const camper = params.get("camper");
+      const camperKey = params.get("camper") || "";
       const backendUrl = "https://script.google.com/macros/s/AKfycbz_sagf02qOlIKf2eGC7an1sq9bqbLgEx03G890blnLMERuITbvFXYD2W556r_iI2E/exec";
-
-      // Set header title
-      const camperTitles = {
-        "2022": "Availability for 25' 2022 Apex Nano (sleeps 6)",
-        "2018": "Availability for 32' 2018 Freedom Express (sleeps 10)",
-        "2015": "Availability for 2015 Starcraft (sleeps 4)"
-      };
-      const camperTitle = camperTitles[camper] || "Camper Availability";
-      document.getElementById("calendarTitle").textContent = camperTitle;
+      const status = document.getElementById("availabilityStatus");
 
       try {
-        const response = await fetch(`${backendUrl}?camper=${encodeURIComponent(camper)}`);
+        const metadata = await HHRMetadata.load();
+        const camper = HHRMetadata.getCamperByWebsiteKey(metadata, camperKey);
+        const isRentable = camper && camper.status.active && camper.status.rentable && camper.website.rentalVisible;
+        if (!isRentable) throw new Error("The selected camper is not currently available for rent.");
+
+        document.getElementById("calendarTitle").textContent = `Availability for ${camper.fullName} (sleeps ${camper.details.sleeps})`;
+        document.getElementById("goBackButton").addEventListener("click", () => {
+          window.location.href = camper.website.quotePath;
+        });
+
+        const response = await fetch(`${backendUrl}?camper=${encodeURIComponent(camper.websiteKey)}`, {
+          headers: { Accept: "application/json" }
+        });
+        if (!response.ok) throw new Error(`Availability service returned ${response.status}.`);
         const data = await response.json();
+        if (!Array.isArray(data)) throw new Error("Availability service returned an invalid response.");
 
         // Add static unavailable dates (Nov–Apr)
         const staticUnavailable = [];
@@ -123,9 +127,11 @@
 
         // Format events (no description used)
         const formattedEvents = data.map(ev => {
-          const shortLoc = ev.location ? ev.location.split(",")[0] : "";
-		  const lowerTitle = ev.title.toLowerCase();
-          const title = lowerTitle.includes("blocked") || lowerTitle.includes("hold") || !ev.location
+          const eventTitle = String(ev.title || "");
+          const eventLocation = String(ev.location || "");
+          const shortLoc = eventLocation ? eventLocation.split(",")[0] : "";
+		  const lowerTitle = eventTitle.toLowerCase();
+          const title = lowerTitle.includes("blocked") || lowerTitle.includes("hold") || !eventLocation
             ? `Not Available${shortLoc ? " @" + shortLoc : ""}`
             : `Booked${shortLoc ? " @" + shortLoc : ""}`;
 
@@ -133,10 +139,10 @@
             title,
             start: ev.start,
             end: ev.end,
-            color: ev.title.includes("Blocked") ? "gray" : "red",
+            color: eventTitle.includes("Blocked") ? "gray" : "red",
             allDay: true,
             extendedProps: {
-              fullLocation: ev.location
+              fullLocation: eventLocation
             },
           };
         });
@@ -155,7 +161,7 @@
             if (fullLocation) {
               new bootstrap.Tooltip(info.el, {
                 title: fullLocation,
-                html: true,
+                html: false,
                 placement: "top",
               });
             }
@@ -165,6 +171,10 @@
         calendar.render();
       } catch (err) {
         console.error("Error loading events:", err);
+        status.textContent = err.message || "Availability is temporarily unavailable.";
+        document.getElementById("goBackButton").addEventListener("click", () => {
+          window.location.href = "index.html";
+        }, { once: true });
       }
     });
   </script>

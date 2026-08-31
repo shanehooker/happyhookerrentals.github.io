@@ -4,12 +4,13 @@
     "name": "Happy Hooker Rentals",
     "homeAddress": "17 Lorisa Ln. Milford, NH 03055",
     "contactEmail": "happyhookerrentals@gmail.com",
+    "contactPhone": "603-320-5247"
+  },
+  "googleAssets": {
     "calendar": {
       "name": "Happy Hooker Rentals",
       "id": "647d50cd910f97384c20ba658a3a4fc3f9a6c4970a4254b227cba66b285a8fca@group.calendar.google.com"
-    }
-  },
-  "googleAssets": {
+    },
     "topLevelFolder": {
       "name": "Happy Hooker Rentals",
       "id": "1tF7OiUGS9c4Ebr5oeaeELcZMz4jpIlRh"
@@ -38,7 +39,7 @@
     }
   },
   "delivery": {
-    "pricePerMileOneWay": 2.1,
+    "pricePerMileOneWay": 2.10,
     "minimumFee": 150,
     "drivers": [
       {
@@ -150,6 +151,27 @@
         "rentalVisible": true,
         "saleVisible": false,
         "galleryPath": "./2022 25' Coachmen Apex Nano/",
+        "galleryImages": [
+          "main.jpg",
+          "layout.jpg",
+          "ext-1.jpg",
+          "ext-2.jpg",
+          "ext-3.jpg",
+          "ext-4.jpg",
+          "ext-5.jpg",
+          "int-1.jpg",
+          "int-2.jpg",
+          "int-3.jpg",
+          "int-4.jpg",
+          "int-5.jpg",
+          "int-6.jpg",
+          "int-7.jpg",
+          "int-8.jpg",
+          "int-9.jpg",
+          "int-10.jpg",
+          "int-11.jpg",
+          "int-12.jpg"
+        ],
         "quotePath": "quote.html?camper=2022",
         "availabilityPath": "availability.html?camper=2022"
       },
@@ -173,6 +195,25 @@
         "rentalVisible": true,
         "saleVisible": false,
         "galleryPath": "./2018 32' Coachman Freedom Express Liberty Edition/",
+        "galleryImages": [
+          "main.jpg",
+          "layout.jpg",
+          "ext-1.jpg",
+          "ext-2.jpg",
+          "ext-3.jpg",
+          "int-1.jpg",
+          "int-2.jpg",
+          "int-3.jpg",
+          "int-4.jpg",
+          "int-5.jpg",
+          "int-6.jpg",
+          "int-7.jpg",
+          "int-8.jpg",
+          "int-9.jpg",
+          "int-10.jpg",
+          "int-11.jpg",
+          "int-12.jpg"
+        ],
         "quotePath": "quote.html?camper=2018",
         "availabilityPath": "availability.html?camper=2018"
       },
@@ -188,13 +229,31 @@
       "fullName": "2015 Starcraft AR-One 20' camper",
       "dailyBaseRate": 110,
       "status": {
-        "rentable": false,
+        "rentable": true,
         "forSale": true,
         "active": true
       },
       "website": {
-        "rentalVisible": false,
+        "rentalVisible": true,
         "saleVisible": true,
+        "galleryPath": "./forSale/2015Starcraft/",
+        "galleryImages": [
+          "ext3.jpg",
+          "ext0.jpg",
+          "ext1.jpg",
+          "ext2.jpg",
+          "int0.jpg",
+          "int1.jpg",
+          "int2.jpg",
+          "int3.jpg",
+          "int4.jpg",
+          "int5.jpg",
+          "int6.jpg",
+          "int7.jpg",
+          "layout.png"
+        ],
+        "quotePath": "quote.html?camper=2015",
+        "availabilityPath": "availability.html?camper=2015",
         "salePagePath": "./forSale/2015Starcraft/index.html",
         "salePreviewImage": "./forSale/2015Starcraft/ext3.jpg"
       },

@@ -285,14 +285,14 @@
   <div class="container position-relative">
     <img src="./HappyHookerLogo.png" alt="Happy Hooker Rentals Logo" class="header-logo">
     <p>Affordable RV Rentals Delivered to Your Campsite in New England</p>
-    <a class="btn" href="mailto:happyhookerrentals@gmail.com">Email Us</a>
+    <a class="btn" id="contactEmailButton" href="mailto:happyhookerrentals@gmail.com">Email Us</a>
 	<a class="btn" href="faq.html" >FAQ</a>
 	<a class="btn" href="https://www.google.com/search?client=firefox-b-1-d&sca_esv=4e1199e6e2dd9208&channel=entpr&biw=1920&bih=893&sxsrf=AE3TifPsnyJRRGH-DwkujF0hM1UfIiDLfA:1761569906831&si=AMgyJEtREmoPL4P1I5IDCfuA8gybfVI2d5Uj7QMwYCZHKDZ-E1qScmLsg8Wy9ZJ2vlQrPiR6m1-Mc5nIBfF0VdcFPtP0xEP3u1XonRJACecnqLDFIeLVLmTYEwbJCZp5dLjvE6vuQrqhoMyuJPNcsKxr1ToSJsovMQ%3D%3D&q=Happy+Hooker+Rentals+Reviews&sa=X&ved=2ahUKEwiEvqykt8SQAxX15MkDHUsbJO0Q0bkNegQIHxAD">Reviews</a>
   </div>
 </header>
   <div class="container position-relative text-start">
 	I deliver well-maintained campers in the New England area with competitive nightly & weekly rates.
-	Happy Hookers make happy campers and <b>return customers receive 5% off</b>.<br>
+	Happy Hookers make happy campers and <b>return customers receive <span id="returnCustomerDiscount">5</span>% off</b>.<br>
 	Browse the camper options and request a quote for your next adventure.
   </div>
   <div class="container my-5">
@@ -301,102 +301,26 @@
       <h3>Save $120 on a late-summer weekend getaway</h3>
       <ul>
         <li>Must book <strong>Friday, August 28 through Sunday, August 30</strong>.</li>
-        <li>Valid for either the <strong>2015 17' Starcraft AR-One</strong> or the <strong>2022 25' Coachmen</strong>.</li>
+        <li>Valid for any camper shown as available for rent below.</li>
         <li>Stay must be at a <strong>full hookup site</strong> at
           <a href="https://www.autumnhillscampground.com/" target="_blank" rel="noopener">Autumn Hills Campground</a>
           or
           <a href="https://www.coldspringscampresort.com/" target="_blank" rel="noopener">Cold Springs Camp Resort</a>
           in Weare, NH.
         </li>
-        <li>Contact me at <a href="tel:6033205247">603-320-5247</a> or email <a href="mailto:happyhookerrentals@gmail.com">happyhookerrentals@gmail.com</a>.</li>
+        <li>Contact me at <a id="promoContactPhone" href="tel:6033205247">603-320-5247</a> or email <a id="promoContactEmail" href="mailto:happyhookerrentals@gmail.com">happyhookerrentals@gmail.com</a>.</li>
       </ul>
     </div>
-    <div class="card">
-		<div class="row-mb-5">
-			<h3>25' 2022 Coachmen Apex Nano</h3>
-			<div class="pricing">
-				<div class="price">$125/night<br>$787.50/week</div>
-				<a class="btn" onclick="openGallery('2022')">View Gallery</a>
-				<a class="btn quote" onclick="openQuotePage('2022')">Request Quote</a>
-			</div>
-		</div>
-		<div class="row mb-5">
-			<p>Sleeps up to 6 | Queen bed & bunks | Outdoor refrigerator and grill | Slideout & awning</p>
-			<div id="carousel2022" class="carousel slide" data-bs-wrap="true">
-			  <div class="card">
-				  <div class="carousel-inner">
-					<div class="carousel-item active"><img src="./2022 25' Coachmen Apex Nano/main.jpg" class="d-block w-100 rounded-2xl shadow" alt="Main view of 2022 Coachmen Apex Nano"></div>
-					<div class="carousel-item"><img src="./2022 25' Coachmen Apex Nano/ext-1.jpg" class="d-block w-100 rounded-2xl shadow" alt="Exterior view"></div>
-					<div class="carousel-item"><img src="./2022 25' Coachmen Apex Nano/int-1.jpg" class="d-block w-100 rounded-2xl shadow" alt="Interior view"></div>
-					<div class="carousel-item"><img src="./2022 25' Coachmen Apex Nano/layout.jpg" class="d-block w-100 rounded-2xl shadow" alt="Layout"></div>
-				  </div>
-				  <button class="carousel-control-prev" type="button" data-bs-target="#carousel2022" data-bs-slide="prev"><span class="carousel-control-prev-icon"></span></button>
-				  <button class="carousel-control-next" type="button" data-bs-target="#carousel2022" data-bs-slide="next"><span class="carousel-control-next-icon"></span></button>
-			  </div>
-			</div>
-		</div>
-	</div>
-	<div class="card">
-		<div class="row mb-5">
-			<h3>32' 2018 Coachman Freedom Express Liberty Edition</h3>
-			<div class="pricing">
-				<div class="price">$135/night<br>$850.50/week</div>
-			    <a class="btn" onclick="openGallery('2018')">View Gallery</a>
-				<a class="btn quote" onclick="openQuotePage('2018')">Request Quote</a>
-			</div>
-		</div>
-		<div class="row mb-5">
-			<p>Sleeps up to 8 | Queen bed & bunks | Family layout | Fireplace and rock wall | Slideout & awning</p>
-			<div id="carousel2018" class="carousel slide" data-bs-wrap="true">
-			  <div class="card">
-				  <div class="carousel-inner">
-					<div class="carousel-item active"><img src="./2018 32' Coachman Freedom Express Liberty Edition/main.jpg" class="d-block w-100 rounded-2xl shadow" alt="Main view of 2018 Coachman Freedom Express"></div>
-					<div class="carousel-item"><img src="./2018 32' Coachman Freedom Express Liberty Edition/ext-1.jpg" class="d-block w-100 rounded-2xl shadow" alt="Exterior view"></div>
-					<div class="carousel-item"><img src="./2018 32' Coachman Freedom Express Liberty Edition/int-1.jpg" class="d-block w-100 rounded-2xl shadow" alt="Interior view"></div>
-					<div class="carousel-item"><img src="./2018 32' Coachman Freedom Express Liberty Edition/layout.jpg" class="d-block w-100 rounded-2xl shadow" alt="Layout"></div>
-				  </div>
-				  <button class="carousel-control-prev" type="button" data-bs-target="#carousel2018" data-bs-slide="prev"><span class="carousel-control-prev-icon"></span></button>
-				  <button class="carousel-control-next" type="button" data-bs-target="#carousel2018" data-bs-slide="next"><span class="carousel-control-next-icon"></span></button>
-			  </div>
-			</div>
-		</div>
-	</div>
-	<div class="card">
-      <div class="row align-items-center g-4">
-        <div class="col-lg-7">
-          <span class="sale-pill">Now For Sale</span>
-          <h3>2015 Starcraft AR-One 17RD</h3>
-          <p>
-            I am selling this lightweight couples camper and have posted a full photo gallery,
-            specs, and contact details on its dedicated sale page.
-          </p>
-          <p class="small">
-            Sleeps up to 4 | Bathroom with tub/shower | Heat and A/C | Power awning
-          </p>
-          <div class="pricing">
-            <div class="price">$100/night<br>$630/week</div>
-            <a class="btn" href="./forSale/2015Starcraft/index.html">View Camper For Sale</a>
-            <a class="btn quote" onclick="openQuotePage('2015')">Request Quote</a>
-          </div>
-        </div>
-        <div class="col-lg-5">
-          <a href="./forSale/2015Starcraft/index.html">
-            <img
-              src="./forSale/2015Starcraft/ext3.jpg"
-              alt="2015 Starcraft AR-One 17RD exterior view"
-              class="sale-preview-img"
-            >
-          </a>
-        </div>
-      </div>
+	<div id="camperListings" aria-live="polite">
+      <div class="card">Loading camper listings&hellip;</div>
     </div>
 	<div class="card">
       <h3>How Delivery Works</h3>
       <p class="small">
         I deliver to your campground and set up the camper so it is walk-in ready.
         Dropoff and pickup is scheduled based on campground check-in and check-out times.
-        Delivery fees vary by distance at <strong>$2.10/mile</strong> away from Milford, NH with a
-        <strong>$150 minimum</strong> — request a quote for exact delivery pricing.
+        Delivery fees vary by distance at <strong><span id="deliveryPrice">$2.10</span>/mile</strong> away from Milford, NH with a
+        <strong><span id="deliveryMinimum">$150</span> minimum</strong> — request a quote for exact delivery pricing.
       </p>
       <p class="small">
         Here is a <a href="campgrounds.html">list of my favorite campgrounds</a>.
@@ -408,8 +332,8 @@
 		<p>© Happy Hooker Rentals LLC<br>
 		Servicing happy campers since 2019<br>
 		Shane Hooker (owner/operator)<br>
-		Email: <a class="link" href="mailto:happyhookerrentals@gmail.com">happyhookerrentals@gmail.com</a><br>
-		Text/Call: <a class="link" href="sms:+16033205247">603-320-5247</a><br>
+		Email: <a class="link" id="footerEmail" href="mailto:happyhookerrentals@gmail.com">happyhookerrentals@gmail.com</a><br>
+		Text/Call: <a class="link" id="footerPhone" href="sms:+16033205247">603-320-5247</a><br>
 		Venmo: <a class="link" href="https://account.venmo.com/u/ShaneHooker653">@shanehooker653</a>
 	  </div>
       </footer>
@@ -438,93 +362,8 @@
 
   <!-- ✅ Bootstrap JS -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="metadata.js"></script>
+  <script src="home.js"></script>
 
-  <script>
-    // Carousel auto-slide on desktop, swipe on mobile
-    document.addEventListener('DOMContentLoaded', () => {
-      const carousels = document.querySelectorAll('.carousel');
-      carousels.forEach(carouselEl => {
-        let touchStartX = 0, touchEndX = 0;
-        carouselEl.addEventListener('touchstart', e => touchStartX = e.changedTouches[0].screenX);
-        carouselEl.addEventListener('touchend', e => {
-          touchEndX = e.changedTouches[0].screenX;
-          if (touchEndX < touchStartX - 50) carouselEl.querySelector('.carousel-control-next')?.click();
-          if (touchEndX > touchStartX + 50) carouselEl.querySelector('.carousel-control-prev')?.click();
-        });
-
-        if (window.innerWidth >= 768) {
-          new bootstrap.Carousel(carouselEl, { interval: 4000, ride: 'carousel', wrap: true, pause: 'hover' });
-        } else {
-          new bootstrap.Carousel(carouselEl, { interval: false, ride: false, wrap: true });
-        }
-      });
-    });
-
-    // Popup gallery
-	function openGallery(year) {
-	  const galleryModal = new bootstrap.Modal(document.getElementById('galleryModal'));
-	  const thumbContainer = document.getElementById('thumbContainer');
-	  const mainImage = document.getElementById('mainImage');
-
-	  const paths = {
-		'2018': "./2018 32' Coachman Freedom Express Liberty Edition/",
-		'2022': "./2022 25' Coachmen Apex Nano/"
-	  };
-
-	  const imageFiles = ['main.jpg', 'layout.jpg'];
-	  if (year === '2018') {
-		for (let i = 1; i <= 3; i++) imageFiles.push(`ext-${i}.jpg`);
-		for (let i = 1; i <= 12; i++) imageFiles.push(`int-${i}.jpg`);
-	  } else {
-		for (let i = 1; i <= 5; i++) imageFiles.push(`ext-${i}.jpg`);
-		for (let i = 1; i <= 12; i++) imageFiles.push(`int-${i}.jpg`);
-	  }
-
-	  thumbContainer.innerHTML = '';
-	  let currentIndex = 0;
-
-	  function showImage(index) {
-		currentIndex = (index + imageFiles.length) % imageFiles.length; // loop
-		mainImage.src = paths[year] + imageFiles[currentIndex];
-		// Highlight selected thumbnail
-		document.querySelectorAll('.gallery-thumb').forEach((t, i) => {
-		  t.classList.toggle('active-thumb', i === currentIndex);
-		});
-	  }
-
-	  // Populate thumbnails
-	  imageFiles.forEach((file, i) => {
-		const thumb = document.createElement('img');
-		thumb.src = paths[year] + file;
-		thumb.className = 'gallery-thumb rounded shadow-sm';
-		thumb.onclick = () => showImage(i);
-		thumbContainer.appendChild(thumb);
-	  });
-
-	  // Show first image
-	  showImage(0);
-	  
-	  // Navigation buttons
-	  prevBtn.onclick = () => showImage(currentIndex - 1);
-	  nextBtn.onclick = () => showImage(currentIndex + 1);
-
-	  // Swipe gesture for mobile
-	  let touchStartX = 0, touchEndX = 0;
-	  mainImage.addEventListener('touchstart', e => touchStartX = e.changedTouches[0].screenX);
-	  mainImage.addEventListener('touchend', e => {
-		touchEndX = e.changedTouches[0].screenX;
-		if (touchEndX < touchStartX - 50) showImage(currentIndex + 1); // swipe left
-		if (touchEndX > touchStartX + 50) showImage(currentIndex - 1); // swipe right
-	  });
-
-	  galleryModal.show();
-	}
-	</script>
-	<script>
-	  function openQuotePage(year) {
-		// open in same tab (so not blocked by pop-up blockers)
-		window.location.href = `quote.html?camper=${year}`;
-	  }
-	</script>
 </body>
 </html>
