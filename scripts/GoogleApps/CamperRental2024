@@ -111,6 +111,33 @@ function validateMetadata_(metadata) {
     camperNames[shortName] = true;
   });
 
+  if (!Array.isArray(metadata.delivery.drivers) || !metadata.delivery.drivers.length) {
+    throw new Error("Metadata delivery.drivers is required and must be a non-empty array.");
+  }
+  const driverIds = new Set();
+  metadata.delivery.drivers.forEach((driver, index) => {
+    const id = String(driver && driver.id || "").trim().toLowerCase();
+    const name = String(driver && driver.name || "").trim();
+    const fuelType = String(driver && driver.fuelType || "").trim().toLowerCase();
+    if (!id || !name) throw new Error(`Metadata driver at index ${index} requires id and name.`);
+    if (driverIds.has(id)) throw new Error(`Duplicate metadata driver id '${id}'.`);
+    if (typeof driver.roundTripMpg !== "number" || driver.roundTripMpg <= 0) {
+      throw new Error(`Metadata driver '${id}' has an invalid roundTripMpg.`);
+    }
+    if (["gasoline", "diesel"].indexOf(fuelType) === -1) {
+      throw new Error(`Metadata driver '${id}' has an invalid fuelType.`);
+    }
+    driverIds.add(id);
+  });
+  if (!driverIds.has("shane")) {
+    throw new Error("Metadata delivery.drivers must include the 'shane' driver used by existing mileage calculations.");
+  }
+
+  const dumpingFee = metadata.fees.find(fee => String(fee && fee.id || "").trim().toLowerCase() === "dumping-fee");
+  if (!dumpingFee || typeof dumpingFee.amount !== "number" || dumpingFee.amount < 0) {
+    throw new Error("Metadata fees must include a valid 'dumping-fee' amount.");
+  }
+
   const forbiddenKeyPattern = /^(?:api[-_]?key|secret|password|access[-_]?token|refresh[-_]?token)$/i;
   function rejectSecrets_(value, path) {
     if (!value || typeof value !== "object") return;
@@ -226,10 +253,20 @@ function buildMetadataSheetData_(metadata) {
   addRow([]);
 
   addSection("Delivery drivers");
-  addRow(["ID", "Name", "Round-trip MPG"]);
+  addRow(["ID", "Name", "Round-trip MPG", "Fuel type"]);
   const driverStart = rows.length + 1;
-  metadata.delivery.drivers.forEach(driver => addRow([driver.id, driver.name, driver.roundTripMpg]));
-  addNamedTable("metadataDriverList", driverStart, rows.length, 1, 3);
+  const driverRows = new Map();
+  metadata.delivery.drivers.forEach(driver => {
+    const row = addRow([
+      driver.id,
+      driver.name,
+      driver.roundTripMpg,
+      String(driver.fuelType).trim().toLowerCase()
+    ]);
+    driverRows.set(String(driver.id).trim().toLowerCase(), row);
+  });
+  addNamedTable("metadataDriverList", driverStart, rows.length, 1, 4);
+  addNamedCell("RT_MPG_Shane", driverRows.get("shane"), 3);
   addRow([]);
 
   addSection("Campers");
@@ -285,11 +322,17 @@ function buildMetadataSheetData_(metadata) {
   addSection("Fees");
   addRow(["ID", "Label", "Amount", "Description"]);
   const feeStart = rows.length + 1;
-  metadata.fees.forEach(fee => addRow([fee.id, fee.label, fee.amount, fee.description]));
+  const feeRows = new Map();
+  metadata.fees.forEach(fee => {
+    const row = addRow([fee.id, fee.label, fee.amount, fee.description]);
+    feeRows.set(String(fee.id).trim().toLowerCase(), row);
+  });
   addNamedTable("metadataFeeTable", feeStart, rows.length, 1, 4);
   addNamedTable("metadataFeeList", feeStart, rows.length, 2, 2);
   addNamedTable("metadataFeeAmounts", feeStart, rows.length, 3, 3);
   addNamedTable("metadataFeeLookup", feeStart, rows.length, 2, 3);
+  addNamedCell("metadataDumpingFee", feeRows.get("dumping-fee"), 3);
+  addNamedCell("dumpingFee", feeRows.get("dumping-fee"), 3);
   addRow([]);
 
   addSection("Add-ons");
@@ -343,11 +386,20 @@ function replaceNamedRange_(spreadsheet, name, range) {
   spreadsheet.setNamedRange(name, range);
 }
 
+function removeNamedRanges_(spreadsheet, names) {
+  const namesToRemove = new Set(names);
+  spreadsheet.getNamedRanges()
+    .filter(namedRange => namesToRemove.has(namedRange.getName()))
+    .forEach(namedRange => namedRange.remove());
+}
+
 function migrateQuoteToMetadata_(spreadsheet) {
   const quoteSheet = spreadsheet.getSheetByName(QUOTE_SHEET_NAME);
   if (!quoteSheet) throw new Error(`Sheet '${QUOTE_SHEET_NAME}' not found.`);
 
   quoteSheet.getRange("A2").setValue("Static pricing and camper data comes from the generated 'metadata' tab. Runtime values remain local.");
+  quoteSheet.getRange("C8").setFormula('=IF(ISNUMBER(B8),TEXT(B8,"ddd"),"invalid date")');
+  quoteSheet.getRange("C9").setFormula('=IF(ISNUMBER(B9),TEXT(B9,"ddd"),"invalid date")');
   quoteSheet.getRange("B11").setFormula('=IFERROR(SUMIF(metadataHolidayList,C11,metadataHolidayRates),"invalid input")');
   quoteSheet.getRange("D11").setFormula('=IFERROR(INDEX(metadataHolidayDescriptions,MATCH(C11,metadataHolidayList,0)),"")');
   quoteSheet.getRange("C14").setFormula('=IF(ISNUMBER(B30),B30,IFERROR(INDEX(metadataCamperBaseRates,MATCH(B13,metadataCamperList,0))*(1-IF(C10="weekly",INDEX(metadataWeeklyDiscounts,MATCH(B14,metadataRateTierList,0)),INDEX(metadataNightlyDiscounts,MATCH(B14,metadataRateTierList,0))))*(1+B11),"invalid input"))');
@@ -375,6 +427,78 @@ function migrateQuoteToMetadata_(spreadsheet) {
       .setAllowInvalid(false)
       .build();
     quoteSheet.getRange(item[0]).setDataValidation(rule);
+  });
+}
+
+function migrateSummaryToMetadata_(spreadsheet) {
+  const summarySheet = spreadsheet.getSheetByName(SUMMARY_SHEET_NAME);
+  if (!summarySheet) throw new Error(`Sheet '${SUMMARY_SHEET_NAME}' not found.`);
+
+  summarySheet.getRange("C21:E21").setFormulas([[
+    "=INDEX(metadataCamperList,1,1)",
+    "=INDEX(metadataCamperList,2,1)",
+    "=INDEX(metadataCamperList,3,1)"
+  ]]);
+}
+
+function migrateBookingsToMetadata_(spreadsheet) {
+  const bookingsSheet = spreadsheet.getSheetByName(BOOKINGS_SHEET_NAME);
+  if (!bookingsSheet) throw new Error(`Sheet '${BOOKINGS_SHEET_NAME}' not found.`);
+
+  bookingsSheet.getRange("K:K").clearDataValidations();
+
+  const mileageCostRange = bookingsSheet.getRange(
+    BOOKINGS_HEADER_ROW + 1,
+    8,
+    Math.max(bookingsSheet.getLastRow() - BOOKINGS_HEADER_ROW, 1),
+    1
+  );
+  mileageCostRange.getFormulas().forEach((row, index) => {
+    const formula = row[0];
+    if (!formula || formula.indexOf("RT_MPG_Shane") === -1) return;
+
+    mileageCostRange.getCell(index + 1, 1).setFormula(
+      formula.replace(/RT_MPG_Shane/g, 'VLOOKUP("shane",metadataDriverList,3,FALSE)')
+    );
+  });
+}
+
+function migrateContractDataToMetadata_(spreadsheet) {
+  const contractDataSheet = spreadsheet.getSheetByName(CONTRACT_DATA_SHEET_NAME);
+  if (!contractDataSheet) throw new Error(`Sheet '${CONTRACT_DATA_SHEET_NAME}' not found.`);
+
+  contractDataSheet.getRange("B6").setFormula(
+    '=IFERROR(INDEX(metadataCamperTable,MATCH(Quote!B13,metadataCamperList,0),4),"Error")'
+  );
+  contractDataSheet.getRange("C12").setFormula(
+    '=if(Quote!B16="YES",CONCATENATE("based on ",Quote!C17, " mi from Milford, NH @$", Quote!E17, "/mi with $", metadataMinimumDeliveryFee, " minimum"),"customer will tow to rental site and return to owner")'
+  );
+  contractDataSheet.getRange("A16").setFormula(
+    '=CONCATENATE("Note: costs assume campsite will have electric/water/septic; otherwise a $",metadataDumpingFee," dumping fee will be applied")'
+  );
+}
+
+function migrateMileageToMetadata_(spreadsheet) {
+  const mileageSheet = spreadsheet.getSheetByName(MILEAGE_SHEET_NAME);
+  if (!mileageSheet) throw new Error(`Sheet '${MILEAGE_SHEET_NAME}' not found.`);
+
+  mileageSheet.getRange("C6").setFormula(
+    "=VLOOKUP(LOWER($B$2),metadataDriverList,3,FALSE)"
+  );
+  mileageSheet.getRange("D4").setFormula(
+    '=SWITCH(VLOOKUP(LOWER($B$2),metadataDriverList,4,FALSE),"gasoline",gasCurrentPrice,"diesel",dieselCurrentPrice,NA())'
+  );
+  mileageSheet.getRange("H4").setFormula("=metadataDeliveryPricePerMile");
+  mileageSheet.getRange("I4").setFormula("=MAX(H4*A4,metadataMinimumDeliveryFee)");
+
+  const historicalMileageCostRange = mileageSheet.getRange("E35:E37");
+  historicalMileageCostRange.getFormulas().forEach((row, index) => {
+    const formula = row[0];
+    if (!formula || formula.indexOf("RT_MPG_Shane") === -1) return;
+
+    historicalMileageCostRange.getCell(index + 1, 1).setFormula(
+      formula.replace(/RT_MPG_Shane/g, 'VLOOKUP("shane",metadataDriverList,3,FALSE)')
+    );
   });
 }
 
@@ -412,8 +536,13 @@ function syncMetadataToSheet_(spreadsheet, metadata) {
     const range = sheet.getRange(definition.row, definition.column, definition.numRows, definition.numColumns);
     replaceNamedRange_(targetSpreadsheet, name, range);
   });
+  removeNamedRanges_(targetSpreadsheet, ["driverData", "RT_MPG_Aaron", "FeeList", "addOnList"]);
 
   migrateQuoteToMetadata_(targetSpreadsheet);
+  migrateSummaryToMetadata_(targetSpreadsheet);
+  migrateBookingsToMetadata_(targetSpreadsheet);
+  migrateContractDataToMetadata_(targetSpreadsheet);
+  migrateMileageToMetadata_(targetSpreadsheet);
   SpreadsheetApp.flush();
   return sheet;
 }
@@ -421,7 +550,7 @@ function syncMetadataToSheet_(spreadsheet, metadata) {
 function syncMetadataToSheet() {
   const sheet = syncMetadataToSheet_(SpreadsheetApp.getActiveSpreadsheet(), getMetadata_(true));
   SpreadsheetApp.getActiveSpreadsheet().toast(
-    `Synced ${sheet.getLastRow()} metadata rows and refreshed Quote formulas/dropdowns.`,
+    `Synced ${sheet.getLastRow()} metadata rows and refreshed metadata-backed workbook formulas/dropdowns.`,
     "Metadata Sync",
     8
   );
@@ -558,6 +687,9 @@ function showMessage_(title, message, options) {
  * pointers are read from metadata.json through getMetadata_().
  */
 const QUOTE_SHEET_NAME = "Quote";
+const SUMMARY_SHEET_NAME = "Summary";
+const CONTRACT_DATA_SHEET_NAME = "Contract data";
+const MILEAGE_SHEET_NAME = "Mileage";
 const QUOTE_TRIGGER_CHECKBOX_A1 = "D3";
 const QUOTE_TRIGGER_STATUS_A1 = "E3";
 const CHECKBOX_CONFIRM_WINDOW_MS = 30000;

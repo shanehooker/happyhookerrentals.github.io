@@ -45,12 +45,14 @@
       {
         "id": "shane",
         "name": "Shane",
-        "roundTripMpg": 10.5
+        "roundTripMpg": 10.5,
+        "fuelType": "gasoline"
       },
       {
         "id": "aaron",
         "name": "Aaron",
-        "roundTripMpg": 17
+        "roundTripMpg": 17,
+        "fuelType": "diesel"
       }
     ]
   },
