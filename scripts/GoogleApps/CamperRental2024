@@ -23,7 +23,8 @@ function getMetadataUrl_() {
 }
 
 function fetchMetadata_() {
-  const response = UrlFetchApp.fetch(getMetadataUrl_(), {
+  const metadataUrl = getMetadataUrl_();
+  const response = UrlFetchApp.fetch(metadataUrl, {
     method: "get",
     headers: { Accept: "application/json" },
     followRedirects: false,
@@ -32,7 +33,7 @@ function fetchMetadata_() {
   const status = response.getResponseCode();
 
   if (status !== 200) {
-    throw new Error(`Metadata fetch failed with HTTP ${status}.`);
+    throw new Error(`Metadata fetch failed with HTTP ${status} from ${metadataUrl}.`);
   }
 
   const body = response.getContentText();
@@ -380,10 +381,17 @@ function buildMetadataSheetData_(metadata) {
 }
 
 function replaceNamedRange_(spreadsheet, name, range) {
-  spreadsheet.getNamedRanges()
-    .filter(namedRange => namedRange.getName() === name)
-    .forEach(namedRange => namedRange.remove());
-  spreadsheet.setNamedRange(name, range);
+  const matches = spreadsheet.getNamedRanges()
+    .filter(namedRange => namedRange.getName() === name);
+
+  if (!matches.length) {
+    spreadsheet.setNamedRange(name, range);
+    return;
+  }
+
+  // Updating the range in place preserves formulas that reference its name.
+  matches[0].setRange(range);
+  matches.slice(1).forEach(namedRange => namedRange.remove());
 }
 
 function removeNamedRanges_(spreadsheet, names) {
@@ -397,31 +405,65 @@ function migrateQuoteToMetadata_(spreadsheet) {
   const quoteSheet = spreadsheet.getSheetByName(QUOTE_SHEET_NAME);
   if (!quoteSheet) throw new Error(`Sheet '${QUOTE_SHEET_NAME}' not found.`);
 
+  const expectedLabels = [
+    ["A20", "Add-Ons"],
+    ["A22", "Fees"],
+    ["A23", "8.5% NH M&R Tax"],
+    ["A24", "Expected Income"],
+    ["A25", "Deposit req:"],
+    ["A26", "Next Payment"],
+    ["A27", "Final payment:"],
+    ["A28", "Full refund date:"]
+  ];
+  expectedLabels.forEach(item => {
+    const actualLabel = String(quoteSheet.getRange(item[0]).getDisplayValue() || "").trim();
+    if (actualLabel !== item[1]) {
+      throw new Error(`Quote layout mismatch at ${item[0]}: expected '${item[1]}', found '${actualLabel}'.`);
+    }
+  });
+
   quoteSheet.getRange("A2").setValue("Static pricing and camper data comes from the generated 'metadata' tab. Runtime values remain local.");
   quoteSheet.getRange("C8").setFormula('=IF(ISNUMBER(B8),TEXT(B8,"ddd"),"invalid date")');
   quoteSheet.getRange("C9").setFormula('=IF(ISNUMBER(B9),TEXT(B9,"ddd"),"invalid date")');
   quoteSheet.getRange("B11").setFormula('=IFERROR(SUMIF(metadataHolidayList,C11,metadataHolidayRates),"invalid input")');
   quoteSheet.getRange("D11").setFormula('=IFERROR(INDEX(metadataHolidayDescriptions,MATCH(C11,metadataHolidayList,0)),"")');
-  quoteSheet.getRange("C14").setFormula('=IF(ISNUMBER(B30),B30,IFERROR(INDEX(metadataCamperBaseRates,MATCH(B13,metadataCamperList,0))*(1-IF(C10="weekly",INDEX(metadataWeeklyDiscounts,MATCH(B14,metadataRateTierList,0)),INDEX(metadataNightlyDiscounts,MATCH(B14,metadataRateTierList,0))))*(1+B11),"invalid input"))');
-  quoteSheet.getRange("B17").setFormula('=IF(ISNUMBER(B28),B28,IF(B16="YES",MAX(C17*metadataDeliveryPricePerMile,metadataMinimumDeliveryFee),0))');
+  quoteSheet.getRange("C14").setFormula('=IF(ISNUMBER(B32),B32,IFERROR(INDEX(metadataCamperBaseRates,MATCH(B13,metadataCamperList,0))*(1-IF(C10="weekly",INDEX(metadataWeeklyDiscounts,MATCH(B14,metadataRateTierList,0)),INDEX(metadataNightlyDiscounts,MATCH(B14,metadataRateTierList,0))))*(1+B11),"invalid input"))');
+  quoteSheet.getRange("B17").setFormula('=IF(ISNUMBER(B30),B30,IF(B16="YES",MAX(C17*metadataDeliveryPricePerMile,metadataMinimumDeliveryFee),0))');
   quoteSheet.getRange("E17").setFormula("=metadataDeliveryPricePerMile");
-  quoteSheet.getRange("B18").setFormula('=IFERROR(VLOOKUP(C18,metadataAddOnLookup,2,FALSE),0)+IFERROR(VLOOKUP(D18,metadataAddOnLookup,2,FALSE),0)+IFERROR(VLOOKUP(E18,metadataAddOnLookup,2,FALSE),0)+IFERROR(VLOOKUP(F18,metadataAddOnLookup,2,FALSE),0)');
-  quoteSheet.getRange("B20").setFormula('=IFERROR(VLOOKUP(C20,metadataFeeLookup,2,FALSE),0)+IFERROR(VLOOKUP(D20,metadataFeeLookup,2,FALSE),0)+IFERROR(VLOOKUP(E20,metadataFeeLookup,2,FALSE),0)');
-  quoteSheet.getRange("B21").setFormula("=IF(ISNUMBER(B32),0,IF(ISNUMBER(B29),B29,metadataNhMealsRoomsTaxPct*B15))");
-  quoteSheet.getRange("B23").setFormula("=metadataDepositAmount");
-  quoteSheet.getRange("C24").setFormula("=B8-metadataSecondPaymentDaysBeforeStart");
-  quoteSheet.getRange("C25").setFormula("=B8-metadataFinalPaymentDaysBeforeStart");
-  quoteSheet.getRange("B26").setFormula("=B8-metadataFullRefundDaysBeforeStart");
+  quoteSheet.getRange("B20").setFormula('=IFERROR(VLOOKUP(C20,metadataAddOnLookup,2,FALSE),0)+IFERROR(VLOOKUP(D20,metadataAddOnLookup,2,FALSE),0)+IFERROR(VLOOKUP(E20,metadataAddOnLookup,2,FALSE),0)+IFERROR(VLOOKUP(F20,metadataAddOnLookup,2,FALSE),0)');
+  quoteSheet.getRange("B22").setFormula('=IFERROR(VLOOKUP(C22,metadataFeeLookup,2,FALSE),0)+IFERROR(VLOOKUP(D22,metadataFeeLookup,2,FALSE),0)+IFERROR(VLOOKUP(E22,metadataFeeLookup,2,FALSE),0)');
+  quoteSheet.getRange("B23").setFormula("=IF(ISNUMBER(B34),0,IF(ISNUMBER(B31),B31,metadataNhMealsRoomsTaxPct*B15))");
+  quoteSheet.getRange("B24").setFormula("=IF(ISNUMBER(B34),SUM(B15:B23)*0.75,SUM(B15:B23))-B33");
+  quoteSheet.getRange("C24").setFormula("=IF(ISNUMBER(B34),SUM(B15:B23)*0.25,0)");
+  quoteSheet.getRange("E24").setFormula("=SUM(B15:B23)");
+  quoteSheet.getRange("B25").setFormula("=metadataDepositAmount");
+  quoteSheet.getRange("B26").setFormula("=ROUND((B24-B25)/2,2)");
+  quoteSheet.getRange("C26").setFormula("=B8-metadataSecondPaymentDaysBeforeStart");
+  quoteSheet.getRange("B27").setFormula("=ROUND(B24-B25-B26,2)");
+  quoteSheet.getRange("C27").setFormula("=B8-metadataFinalPaymentDaysBeforeStart");
+  quoteSheet.getRange("B28").setFormula("=B8-metadataFullRefundDaysBeforeStart");
+
+  // Repair cells written by the earlier migration before Driver/Towing rows were added.
+  [
+    ["B18", "metadataAddOnLookup"],
+    ["B21", "metadataNhMealsRoomsTaxPct"],
+    ["C25", "metadataFinalPaymentDaysBeforeStart"]
+  ].forEach(item => {
+    const cell = quoteSheet.getRange(item[0]);
+    if (cell.getFormula().indexOf(item[1]) !== -1) cell.clearContent();
+  });
+  quoteSheet.getRange("C18:F18").clearDataValidations();
 
   const validations = [
     ["B13", "metadataCamperList"],
     ["B14", "metadataRateTierList"],
     ["C11", "metadataHolidayList"],
-    ["C18:F18", "metadataAddOnList"],
-    ["C20:E20", "metadataFeeList"]
+    ["C20:F20", "metadataAddOnList"],
+    ["C22:E22", "metadataFeeList"]
   ];
   validations.forEach(item => {
     const sourceRange = spreadsheet.getRangeByName(item[1]);
+    if (!sourceRange) throw new Error(`Named range '${item[1]}' is missing after metadata sync.`);
     const rule = SpreadsheetApp.newDataValidation()
       .requireValueInRange(sourceRange, true)
       .setAllowInvalid(false)
@@ -431,7 +473,7 @@ function migrateQuoteToMetadata_(spreadsheet) {
 }
 
 function isSummaryCamperFormula_(formula) {
-  return /^=INDEX\(metadataCamperList,\d+,1\)$/i.test(String(formula || "").replace(/\s+/g, ""));
+  return /^=INDEX\((?:metadataCamperList|#REF!),\d+,1\)$/i.test(String(formula || "").replace(/\s+/g, ""));
 }
 
 function migrateSummaryToMetadata_(spreadsheet, metadata) {
@@ -439,6 +481,9 @@ function migrateSummaryToMetadata_(spreadsheet, metadata) {
   if (!summarySheet) throw new Error(`Sheet '${SUMMARY_SHEET_NAME}' not found.`);
   if (!metadata || !Array.isArray(metadata.campers) || !metadata.campers.length) {
     throw new Error("Metadata must include at least one camper before migrating the Summary sheet.");
+  }
+  if (String(summarySheet.getRange("B21").getDisplayValue() || "").trim() !== "Total") {
+    throw new Error("Summary layout mismatch: expected 'Total' in B21.");
   }
 
   const outputRow = 21;
@@ -474,6 +519,13 @@ function migrateSummaryToMetadata_(spreadsheet, metadata) {
     .setFormulas([camperFormulas]);
 }
 
+function repairDriverMpgFormula_(formula) {
+  const replacement = 'VLOOKUP("shane",metadataDriverList,3,FALSE)';
+  return String(formula || "")
+    .replace(/RT_MPG_Shane/g, replacement)
+    .replace(/VLOOKUP\(\s*"shane"\s*,\s*#REF!\s*,\s*3\s*,\s*FALSE\s*\)/gi, replacement);
+}
+
 function migrateBookingsToMetadata_(spreadsheet) {
   const bookingsSheet = spreadsheet.getSheetByName(BOOKINGS_SHEET_NAME);
   if (!bookingsSheet) throw new Error(`Sheet '${BOOKINGS_SHEET_NAME}' not found.`);
@@ -488,11 +540,10 @@ function migrateBookingsToMetadata_(spreadsheet) {
   );
   mileageCostRange.getFormulas().forEach((row, index) => {
     const formula = row[0];
-    if (!formula || formula.indexOf("RT_MPG_Shane") === -1) return;
+    const migratedFormula = repairDriverMpgFormula_(formula);
+    if (!formula || migratedFormula === formula) return;
 
-    mileageCostRange.getCell(index + 1, 1).setFormula(
-      formula.replace(/RT_MPG_Shane/g, 'VLOOKUP("shane",metadataDriverList,3,FALSE)')
-    );
+    mileageCostRange.getCell(index + 1, 1).setFormula(migratedFormula);
   });
 }
 
@@ -527,11 +578,10 @@ function migrateMileageToMetadata_(spreadsheet) {
   const historicalMileageCostRange = mileageSheet.getRange("E35:E37");
   historicalMileageCostRange.getFormulas().forEach((row, index) => {
     const formula = row[0];
-    if (!formula || formula.indexOf("RT_MPG_Shane") === -1) return;
+    const migratedFormula = repairDriverMpgFormula_(formula);
+    if (!formula || migratedFormula === formula) return;
 
-    historicalMileageCostRange.getCell(index + 1, 1).setFormula(
-      formula.replace(/RT_MPG_Shane/g, 'VLOOKUP("shane",metadataDriverList,3,FALSE)')
-    );
+    historicalMileageCostRange.getCell(index + 1, 1).setFormula(migratedFormula);
   });
 }
 
