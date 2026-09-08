@@ -430,15 +430,48 @@ function migrateQuoteToMetadata_(spreadsheet) {
   });
 }
 
-function migrateSummaryToMetadata_(spreadsheet) {
+function isSummaryCamperFormula_(formula) {
+  return /^=INDEX\(metadataCamperList,\d+,1\)$/i.test(String(formula || "").replace(/\s+/g, ""));
+}
+
+function migrateSummaryToMetadata_(spreadsheet, metadata) {
   const summarySheet = spreadsheet.getSheetByName(SUMMARY_SHEET_NAME);
   if (!summarySheet) throw new Error(`Sheet '${SUMMARY_SHEET_NAME}' not found.`);
+  if (!metadata || !Array.isArray(metadata.campers) || !metadata.campers.length) {
+    throw new Error("Metadata must include at least one camper before migrating the Summary sheet.");
+  }
 
-  summarySheet.getRange("C21:E21").setFormulas([[
-    "=INDEX(metadataCamperList,1,1)",
-    "=INDEX(metadataCamperList,2,1)",
-    "=INDEX(metadataCamperList,3,1)"
-  ]]);
+  const outputRow = 21;
+  const firstOutputColumn = 3;
+  const camperCount = metadata.campers.length;
+  const columnsToInspect = Math.max(
+    camperCount,
+    summarySheet.getLastColumn() - firstOutputColumn + 1
+  );
+  const existingRange = summarySheet.getRange(outputRow, firstOutputColumn, 1, columnsToInspect);
+  const existingFormulas = existingRange.getFormulas()[0];
+  const existingValues = existingRange.getValues()[0];
+
+  for (let index = 0; index < camperCount; index++) {
+    const hasContent = existingFormulas[index] || existingValues[index] !== "";
+    if (hasContent && !isSummaryCamperFormula_(existingFormulas[index])) {
+      const cell = existingRange.getCell(1, index + 1).getA1Notation();
+      throw new Error(`Cannot write camper summary formulas because ${SUMMARY_SHEET_NAME}!${cell} contains unmanaged content.`);
+    }
+  }
+
+  existingFormulas.forEach((formula, index) => {
+    if (isSummaryCamperFormula_(formula)) {
+      existingRange.getCell(1, index + 1).clearContent();
+    }
+  });
+
+  const camperFormulas = metadata.campers.map((camper, index) =>
+    `=INDEX(metadataCamperList,${index + 1},1)`
+  );
+  summarySheet
+    .getRange(outputRow, firstOutputColumn, 1, camperCount)
+    .setFormulas([camperFormulas]);
 }
 
 function migrateBookingsToMetadata_(spreadsheet) {
@@ -539,7 +572,7 @@ function syncMetadataToSheet_(spreadsheet, metadata) {
   removeNamedRanges_(targetSpreadsheet, ["driverData", "RT_MPG_Aaron", "FeeList", "addOnList"]);
 
   migrateQuoteToMetadata_(targetSpreadsheet);
-  migrateSummaryToMetadata_(targetSpreadsheet);
+  migrateSummaryToMetadata_(targetSpreadsheet, sourceMetadata);
   migrateBookingsToMetadata_(targetSpreadsheet);
   migrateContractDataToMetadata_(targetSpreadsheet);
   migrateMileageToMetadata_(targetSpreadsheet);
