@@ -560,6 +560,7 @@ function syncMetadataToSheet() {
  * Helper functions for distance and duration calculations
  */
 const ROUTE_CACHE_TTL_SECONDS = 21600;
+const ROUTE_CACHE_VERSION_PROPERTY = "HHR_ROUTE_CACHE_VERSION";
 
 function MilesFromHome(address) {
   const routeSummary = getRouteSummaryFromHome_(address);
@@ -580,8 +581,11 @@ function getRouteSummaryFromHome_(address) {
   const destination = String(address || "").trim();
   if (!destination) return { miles: "unknown", hours: "unknown" };
 
+  const origin = String(getMetadata_().business.homeAddress || "").trim();
+  if (!origin) throw new Error("Metadata business.homeAddress is required for route calculations.");
+
   const cache = CacheService.getScriptCache();
-  const cacheKey = getRouteCacheKey_(destination);
+  const cacheKey = getRouteCacheKey_(origin, destination);
   const cachedSummary = cache.get(cacheKey);
   if (cachedSummary) {
     try {
@@ -592,7 +596,7 @@ function getRouteSummaryFromHome_(address) {
   }
 
   const directions = Maps.newDirectionFinder()
-    .setOrigin(getMetadata_().business.homeAddress)
+    .setOrigin(origin)
     .setDestination(destination)
     .setMode(Maps.DirectionFinder.Mode.DRIVING)
     .getDirections();
@@ -630,8 +634,44 @@ function getRouteSummaryFromHome_(address) {
   return routeSummary;
 }
 
-function getRouteCacheKey_(destination) {
-  return `route:${String(destination || "").trim().toLowerCase()}`;
+function getRouteCacheVersion_() {
+  const storedVersion = PropertiesService.getScriptProperties().getProperty(ROUTE_CACHE_VERSION_PROPERTY);
+  const parsedVersion = Number.parseInt(storedVersion, 10);
+  return Number.isSafeInteger(parsedVersion) && parsedVersion > 0 ? parsedVersion : 1;
+}
+
+function getRouteCacheKey_(origin, destination) {
+  const normalizedRoute = [origin, destination]
+    .map(value => String(value || "").trim().toLowerCase())
+    .join("\n");
+  const digest = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    normalizedRoute,
+    Utilities.Charset.UTF_8
+  ).map(byte => (`0${((byte + 256) % 256).toString(16)}`).slice(-2)).join("");
+
+  return `route:v${getRouteCacheVersion_()}:${digest}`;
+}
+
+/**
+ * Clears cached metadata and invalidates all route cache entries.
+ * Run manually after publishing metadata or changing the business home address.
+ */
+function clearMetadataAndRouteCaches() {
+  const cache = CacheService.getScriptCache();
+  cache.remove(METADATA_CACHE_KEY);
+
+  const scriptProperties = PropertiesService.getScriptProperties();
+  const currentVersion = getRouteCacheVersion_();
+  const nextVersion = currentVersion >= Number.MAX_SAFE_INTEGER ? 1 : currentVersion + 1;
+  scriptProperties.setProperty(ROUTE_CACHE_VERSION_PROPERTY, String(nextVersion));
+
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  if (spreadsheet) {
+    spreadsheet.toast("Metadata and route caches cleared.", "Cache Cleared", 5);
+  }
+
+  return nextVersion;
 }
 
 
@@ -1289,6 +1329,7 @@ function addSpreadsheetMenu_() {
       .addItem("Setup Triggers", "setupOnEditTrigger")
       .addSeparator()
       .addItem("Sync Metadata", "syncMetadataToSheet")
+      .addItem("Clear Metadata & Route Caches", "clearMetadataAndRouteCaches")
       .addToUi();
   } catch (e) {
     Logger.log("Could not create spreadsheet menu: " + e);
