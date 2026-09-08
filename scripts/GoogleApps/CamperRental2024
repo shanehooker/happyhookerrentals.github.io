@@ -97,6 +97,13 @@ function validateMetadata_(metadata) {
     }
   });
 
+  ["topLevelFolder", "quoteFolder", "workflowSpreadsheetTemplate"].forEach(key => {
+    const asset = metadata.googleAssets[key];
+    if (!asset || !String(asset.id || "").trim() || !String(asset.name || "").trim()) {
+      throw new Error(`Metadata googleAssets.${key} requires a name and id.`);
+    }
+  });
+
   const camperIds = {};
   const camperNames = {};
   metadata.campers.forEach((camper, index) => {
@@ -353,6 +360,7 @@ function buildMetadataSheetData_(metadata) {
     ["calendar", "calendar", metadata.googleAssets.calendar],
     ["folder", "topLevelFolder", metadata.googleAssets.topLevelFolder],
     ["folder", "quoteFolder", metadata.googleAssets.quoteFolder],
+    ["template", "workflowSpreadsheetTemplate", metadata.googleAssets.workflowSpreadsheetTemplate],
     ["spreadsheet", "contactsSpreadsheet", metadata.googleAssets.contactsSpreadsheet],
     ["template", "quoteAgreement", metadata.googleAssets.templates.quoteAgreement],
     ["template", "quoteEmail", metadata.googleAssets.templates.quoteEmail],
@@ -812,7 +820,10 @@ function showMessage_(title, message, options) {
 const QUOTE_SHEET_NAME = "Quote";
 const SUMMARY_SHEET_NAME = "Summary";
 const CONTRACT_DATA_SHEET_NAME = "Contract data";
+const INVOICE_DATA_SHEET_NAME = "Invoice data";
+const EXPENSES_SHEET_NAME = "Expenses";
 const MILEAGE_SHEET_NAME = "Mileage";
+const NH_MR_TAX_SHEET_NAME = "NH M&R Tax";
 const QUOTE_TRIGGER_CHECKBOX_A1 = "D3";
 const QUOTE_TRIGGER_STATUS_A1 = "E3";
 const CHECKBOX_CONFIRM_WINDOW_MS = 30000;
@@ -905,16 +916,36 @@ function getConfiguredQuoteFolder_() {
   return DriveApp.getFolderById(getGoogleAsset_("quoteFolder").id);
 }
 
+function getWorkflowSpreadsheetFolder_() {
+  const folderConfig = getGoogleAsset_("topLevelFolder");
+  return DriveApp.getFolderById(String(folderConfig.id).trim());
+}
+
 function getWorkflowSearchFolders_() {
+  const folders = [];
+  const seenFolderIds = new Set();
+
+  function addFolder_(folder) {
+    if (!folder) return;
+
+    const folderId = folder.getId();
+    if (seenFolderIds.has(folderId)) return;
+
+    seenFolderIds.add(folderId);
+    folders.push(folder);
+  }
+
+  // Keep workflow spreadsheets in the explicit top-level folder, while
+  // retaining the quote-folder and parent-folder locations used historically.
+  addFolder_(getWorkflowSpreadsheetFolder_());
+
   const rootFolder = getQuoteRootFolder_();
-  const folders = [rootFolder];
+  addFolder_(rootFolder);
   const parents = rootFolder.getParents();
 
   if (parents.hasNext()) {
     const parentFolder = parents.next();
-    if (parentFolder.getId() !== rootFolder.getId()) {
-      folders.push(parentFolder);
-    }
+    addFolder_(parentFolder);
   }
 
   return folders;
@@ -1042,13 +1073,24 @@ function getQuoteStorageFolderForDate_(dateValue) {
   const bookingYear = bookingDate.getFullYear();
   const rootFolder = getQuoteRootFolder_();
   const folderName = getYearFolderName_(bookingYear);
-  const matchingFolders = rootFolder.getFoldersByName(folderName);
+  let matchingFolders = rootFolder.getFoldersByName(folderName);
 
   if (!matchingFolders.hasNext()) {
-    throw new Error(
-      `Missing required year folder '${folderName}' under '${rootFolder.getName()}'. ` +
-      `Create a new sheet and folder for ${folderName} before creating quotes for that year.`
-    );
+    const lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+
+    try {
+      // Recheck after acquiring the lock so concurrent quote requests do not
+      // create duplicate year folders.
+      matchingFolders = rootFolder.getFoldersByName(folderName);
+      if (!matchingFolders.hasNext()) {
+        rootFolder.createFolder(folderName);
+        Logger.log(`Created quote storage folder '${folderName}' under '${rootFolder.getName()}'.`);
+        matchingFolders = rootFolder.getFoldersByName(folderName);
+      }
+    } finally {
+      lock.releaseLock();
+    }
   }
 
   const yearFolder = matchingFolders.next();
@@ -1064,24 +1106,113 @@ function getQuoteStorageFolderForDate_(dateValue) {
 }
 
 function getWorkflowSpreadsheetForYear_(year) {
-  const rootFolder = getQuoteRootFolder_();
-  const possibleNames = getIncomeExpensesSpreadsheetNamesForYear_(year);
-  const folderSearchChain = getWorkflowSearchFolders_();
-
-  for (const folder of folderSearchChain) {
-    const match = findGoogleSheetByNamesInFolder_(folder, possibleNames);
-    if (match) {
-      Logger.log(
-        `Using workflow spreadsheet '${match.matchedName}' from folder '${match.folder.getName()}' for ${year}.`
-      );
-      return SpreadsheetApp.openById(match.file.getId());
-    }
+  const normalizedYear = String(year || "").trim();
+  if (!/^\d{4}$/.test(normalizedYear)) {
+    throw new Error(`Cannot provision workflow spreadsheet for invalid year '${year}'.`);
   }
 
-  throw new Error(
-    `Missing required spreadsheet for ${year}. Expected one of: ${possibleNames.join(", ")} ` +
-    `under '${rootFolder.getName()}' or one of its parent folders. Create the yearly sheet before creating quotes for that year.`
-  );
+  const rootFolder = getWorkflowSpreadsheetFolder_();
+  const possibleNames = getIncomeExpensesSpreadsheetNamesForYear_(normalizedYear);
+  const folderSearchChain = getWorkflowSearchFolders_();
+
+  function findExistingSpreadsheet_() {
+    for (const folder of folderSearchChain) {
+      const match = findGoogleSheetByNamesInFolder_(folder, possibleNames);
+      if (match) {
+        Logger.log(
+          `Using workflow spreadsheet '${match.matchedName}' from folder '${match.folder.getName()}' for ${normalizedYear}.`
+        );
+        return SpreadsheetApp.openById(match.file.getId());
+      }
+    }
+
+    return null;
+  }
+
+  const existingSpreadsheet = findExistingSpreadsheet_();
+  if (existingSpreadsheet) return existingSpreadsheet;
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  try {
+    // Recheck after acquiring the lock so concurrent quote requests do not
+    // create duplicate yearly workbooks.
+    const lockedExistingSpreadsheet = findExistingSpreadsheet_();
+    if (lockedExistingSpreadsheet) return lockedExistingSpreadsheet;
+
+    const templateConfig = getGoogleAsset_("workflowSpreadsheetTemplate");
+    const templateFile = getDriveFileByIdOrName_(templateConfig.id, templateConfig.name);
+    if (!templateFile) {
+      throw new Error(
+        `Missing workflow spreadsheet template '${templateConfig.name}' for ${normalizedYear}.`
+      );
+    }
+
+    const targetName = `HHRentals-${normalizedYear}IncomeExpenses`;
+    const targetFile = templateFile.makeCopy(targetName, rootFolder);
+    const newSpreadsheet = SpreadsheetApp.openById(targetFile.getId());
+
+    syncMetadataToSheet_(newSpreadsheet, getMetadata_(true));
+    initializeNextBookingId_(newSpreadsheet, normalizedYear);
+    validateWorkflowSpreadsheetStructure_(newSpreadsheet);
+    ensureSpreadsheetTriggers_(newSpreadsheet);
+
+    Logger.log(
+      `Created workflow spreadsheet '${targetName}' from '${templateFile.getName()}' in '${rootFolder.getName()}'.`
+    );
+    return newSpreadsheet;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function initializeNextBookingId_(spreadsheet, year) {
+  const nextBookingRange = spreadsheet.getRangeByName("nextBookingId");
+  if (!nextBookingRange) {
+    throw new Error(`Named range 'nextBookingId' is missing from '${spreadsheet.getName()}'.`);
+  }
+
+  // Existing booking IDs use the four-digit year followed by a two-digit
+  // sequence. Start each newly provisioned year at sequence 01.
+  nextBookingRange.setValue(Number(year) * 100 + 1);
+}
+
+function validateWorkflowSpreadsheetStructure_(spreadsheet) {
+  const requiredSheetNames = [
+    SUMMARY_SHEET_NAME,
+    BOOKINGS_SHEET_NAME,
+    WAITING_SHEET_NAME,
+    QUOTE_SHEET_NAME,
+    INCOME_SHEET_NAME,
+    EXPENSES_SHEET_NAME,
+    MILEAGE_SHEET_NAME,
+    NH_MR_TAX_SHEET_NAME,
+    CONTRACT_DATA_SHEET_NAME,
+    INVOICE_DATA_SHEET_NAME,
+    METADATA_SHEET_NAME
+  ];
+
+  requiredSheetNames.forEach(sheetName => {
+    if (!spreadsheet.getSheetByName(sheetName)) {
+      throw new Error(`Provisioned workflow spreadsheet is missing required sheet '${sheetName}'.`);
+    }
+  });
+
+  const requiredPlaceholders = [
+    [BOOKINGS_SHEET_NAME, "{{nextRenter}}"],
+    [WAITING_SHEET_NAME, "{{nextQuote}}"],
+    [INCOME_SHEET_NAME, ENTRY_INSERT_PLACEHOLDER],
+    [EXPENSES_SHEET_NAME, ENTRY_INSERT_PLACEHOLDER],
+    [MILEAGE_SHEET_NAME, ENTRY_INSERT_PLACEHOLDER]
+  ];
+
+  requiredPlaceholders.forEach(item => {
+    const sheet = spreadsheet.getSheetByName(item[0]);
+    if (!findExactCell_(sheet, item[1])) {
+      throw new Error(`Provisioned '${item[0]}' sheet is missing required placeholder '${item[1]}'.`);
+    }
+  });
 }
 
 function getQuoteWorkflowContext_(startDateValue) {

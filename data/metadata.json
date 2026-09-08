@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "business": {
     "name": "Happy Hooker Rentals",
     "homeAddress": "17 Lorisa Ln. Milford, NH 03055",
@@ -18,6 +18,10 @@
     "quoteFolder": {
       "name": "Rental Contracts and Invoices",
       "id": "1koKnYwhSzl_HQuB33WAI5JrN4R_AqDmG"
+    },
+    "workflowSpreadsheetTemplate": {
+      "name": "HHRentals-TemplateIncomeExpenses",
+      "id": "1lyvnn0S36fyk_51Oai6e9zlxKwscaz4NNsj_YmkiFG0"
     },
     "contactsSpreadsheet": {
       "sheetName": "Contacts",
