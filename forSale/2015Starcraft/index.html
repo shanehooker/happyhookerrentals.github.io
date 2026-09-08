@@ -258,9 +258,9 @@
 
   <div class="container">
     <h1>2015 Starcraft AR-One 17RD</h1>
-    <div class="price">$6,500</div>
+    <div class="price" id="salePrice" data-camper-key="2015">Loading sale price&hellip;</div>
     <div class="sale-note">Priced below comparable dealer listings for a quick private sale.</div>
-    <div class="location">📍 Located in Milford, NH</div>
+    <div class="location" id="saleLocation">Loading location&hellip;</div>
 
     <table>
       <tr>
@@ -417,6 +417,8 @@
     </div>
   </div>
 
+  <script src="../../metadata.js"></script>
+  <script src="../../sale.js"></script>
   <script>
     // Build a single ordered list of all lightbox items on the page
     const items = Array.from(document.querySelectorAll(".lb-item")).map((el) => ({

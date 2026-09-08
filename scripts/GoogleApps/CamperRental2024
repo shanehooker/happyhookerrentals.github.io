@@ -1,8 +1,599 @@
 /**
+ * Static business metadata.
+ *
+ * HHR_METADATA_URL may be set in Script Properties for preview deployments.
+ * Only the production site and its GitHub Pages host are accepted.
+ */
+const METADATA_DEFAULT_URL = "https://happyhookerrentals.com/data/metadata.json";
+const METADATA_CACHE_KEY = "hhr:metadata:v1";
+const METADATA_CACHE_TTL_SECONDS = 21600;
+const METADATA_SHEET_NAME = "metadata";
+const METADATA_ALLOWED_HOSTS = ["happyhookerrentals.com", "shanehooker.github.io"];
+
+function getMetadataUrl_() {
+  const configuredUrl = PropertiesService.getScriptProperties().getProperty("HHR_METADATA_URL");
+  const metadataUrl = String(configuredUrl || METADATA_DEFAULT_URL).trim();
+  const match = metadataUrl.match(/^https:\/\/([^/?#]+)\/data\/metadata\.json(?:[?#].*)?$/i);
+
+  if (!match || METADATA_ALLOWED_HOSTS.indexOf(match[1].toLowerCase()) === -1) {
+    throw new Error("HHR_METADATA_URL must use HTTPS and point to /data/metadata.json on an approved host.");
+  }
+
+  return metadataUrl;
+}
+
+function fetchMetadata_() {
+  const response = UrlFetchApp.fetch(getMetadataUrl_(), {
+    method: "get",
+    headers: { Accept: "application/json" },
+    followRedirects: false,
+    muteHttpExceptions: true
+  });
+  const status = response.getResponseCode();
+
+  if (status !== 200) {
+    throw new Error(`Metadata fetch failed with HTTP ${status}.`);
+  }
+
+  const body = response.getContentText();
+  if (body.length > 500000) throw new Error("Metadata response exceeds the 500 KB safety limit.");
+
+  let metadata;
+  try {
+    metadata = JSON.parse(body);
+  } catch (e) {
+    throw new Error(`Metadata response is not valid JSON: ${e.message}`);
+  }
+
+  return validateMetadata_(metadata);
+}
+
+function getMetadata_(forceRefresh) {
+  const cache = CacheService.getScriptCache();
+
+  if (forceRefresh !== true) {
+    const cached = cache.get(METADATA_CACHE_KEY);
+    if (cached) {
+      try {
+        return validateMetadata_(JSON.parse(cached));
+      } catch (e) {
+        Logger.log(`Ignoring invalid cached metadata: ${e.message}`);
+      }
+    }
+  }
+
+  const metadata = fetchMetadata_();
+  try {
+    cache.put(METADATA_CACHE_KEY, JSON.stringify(metadata), METADATA_CACHE_TTL_SECONDS);
+  } catch (e) {
+    Logger.log(`Could not cache metadata: ${e.message}`);
+  }
+  return metadata;
+}
+
+function validateMetadata_(metadata) {
+  if (!metadata || Object.prototype.toString.call(metadata) !== "[object Object]") {
+    throw new Error("Metadata root must be an object.");
+  }
+
+  const requiredObjects = ["business", "googleAssets", "delivery", "pricingRules"];
+  requiredObjects.forEach(key => {
+    if (!metadata[key] || Object.prototype.toString.call(metadata[key]) !== "[object Object]") {
+      throw new Error(`Metadata section '${key}' is required and must be an object.`);
+    }
+  });
+
+  const requiredArrays = ["rateTiers", "holidays", "campers", "fees", "addOns"];
+  requiredArrays.forEach(key => {
+    if (!Array.isArray(metadata[key])) {
+      throw new Error(`Metadata section '${key}' is required and must be an array.`);
+    }
+  });
+
+  ["name", "homeAddress", "contactEmail", "contactPhone"].forEach(key => {
+    if (!String(metadata.business[key] || "").trim()) {
+      throw new Error(`Metadata business.${key} is required.`);
+    }
+  });
+
+  const camperIds = {};
+  const camperNames = {};
+  metadata.campers.forEach((camper, index) => {
+    const id = String(camper && camper.id || "").trim();
+    const shortName = String(camper && camper.shortName || "").trim();
+    if (!id || !shortName) throw new Error(`Metadata camper at index ${index} requires id and shortName.`);
+    if (camperIds[id]) throw new Error(`Duplicate metadata camper id '${id}'.`);
+    if (camperNames[shortName]) throw new Error(`Duplicate metadata camper shortName '${shortName}'.`);
+    if (typeof camper.dailyBaseRate !== "number" || camper.dailyBaseRate < 0) {
+      throw new Error(`Metadata camper '${id}' has an invalid dailyBaseRate.`);
+    }
+    camperIds[id] = true;
+    camperNames[shortName] = true;
+  });
+
+  if (!Array.isArray(metadata.delivery.drivers) || !metadata.delivery.drivers.length) {
+    throw new Error("Metadata delivery.drivers is required and must be a non-empty array.");
+  }
+  const driverIds = new Set();
+  metadata.delivery.drivers.forEach((driver, index) => {
+    const id = String(driver && driver.id || "").trim().toLowerCase();
+    const name = String(driver && driver.name || "").trim();
+    const fuelType = String(driver && driver.fuelType || "").trim().toLowerCase();
+    if (!id || !name) throw new Error(`Metadata driver at index ${index} requires id and name.`);
+    if (driverIds.has(id)) throw new Error(`Duplicate metadata driver id '${id}'.`);
+    if (typeof driver.roundTripMpg !== "number" || driver.roundTripMpg <= 0) {
+      throw new Error(`Metadata driver '${id}' has an invalid roundTripMpg.`);
+    }
+    if (["gasoline", "diesel"].indexOf(fuelType) === -1) {
+      throw new Error(`Metadata driver '${id}' has an invalid fuelType.`);
+    }
+    driverIds.add(id);
+  });
+  if (!driverIds.has("shane")) {
+    throw new Error("Metadata delivery.drivers must include the 'shane' driver used by existing mileage calculations.");
+  }
+
+  const dumpingFee = metadata.fees.find(fee => String(fee && fee.id || "").trim().toLowerCase() === "dumping-fee");
+  if (!dumpingFee || typeof dumpingFee.amount !== "number" || dumpingFee.amount < 0) {
+    throw new Error("Metadata fees must include a valid 'dumping-fee' amount.");
+  }
+
+  const forbiddenKeyPattern = /^(?:api[-_]?key|secret|password|access[-_]?token|refresh[-_]?token)$/i;
+  function rejectSecrets_(value, path) {
+    if (!value || typeof value !== "object") return;
+    Object.keys(value).forEach(key => {
+      if (forbiddenKeyPattern.test(key)) {
+        throw new Error(`Public metadata must not contain secret-like field '${path}${key}'.`);
+      }
+      rejectSecrets_(value[key], `${path}${key}.`);
+    });
+  }
+  rejectSecrets_(metadata, "");
+
+  return metadata;
+}
+
+function getCamperByShortName_(shortName) {
+  const normalizedName = String(shortName || "").trim();
+  return getMetadata_().campers.find(camper => camper.shortName === normalizedName) || null;
+}
+
+function getRateTierById_(tierId) {
+  const normalizedId = String(tierId || "").trim();
+  return getMetadata_().rateTiers.find(tier => tier.id === normalizedId) || null;
+}
+
+function getPricingRules_() {
+  return getMetadata_().pricingRules;
+}
+
+function getGoogleAsset_(assetPath) {
+  const pathParts = String(assetPath || "").split(".").filter(Boolean);
+  let value = getMetadata_().googleAssets;
+  pathParts.forEach(part => {
+    value = value && value[part];
+  });
+
+  if (!value || typeof value !== "object") {
+    throw new Error(`Google asset '${assetPath}' is missing from metadata.`);
+  }
+  return value;
+}
+
+function buildMetadataSheetData_(metadata) {
+  const rows = [];
+  const sections = [];
+  const namedRanges = {};
+  const addRow = values => {
+    const row = (values || []).slice(0, 10);
+    while (row.length < 10) row.push("");
+    rows.push(row);
+    return rows.length;
+  };
+  const addSection = title => {
+    const row = addRow([title]);
+    sections.push(row);
+    return row;
+  };
+  const addNamedTable = (name, startRow, endRow, startColumn, endColumn) => {
+    namedRanges[name] = {
+      row: startRow,
+      column: startColumn,
+      numRows: endRow - startRow + 1,
+      numColumns: endColumn - startColumn + 1
+    };
+  };
+  const addNamedCell = (name, row, column) => addNamedTable(name, row, row, column, column);
+
+  addRow(["Metadata source", getMetadataUrl_(), "Version", metadata.version, "Synced", new Date()]);
+  addRow([]);
+
+  addSection("Business settings");
+  addRow(["Key", "Value"]);
+  const businessStart = rows.length + 1;
+  addRow(["business.name", metadata.business.name]);
+  addRow(["business.homeAddress", metadata.business.homeAddress]);
+  addRow(["business.contactEmail", metadata.business.contactEmail]);
+  addRow(["business.contactPhone", metadata.business.contactPhone]);
+  addNamedTable("metadataBusinessSettings", businessStart, rows.length, 1, 2);
+  addRow([]);
+
+  addSection("Pricing rules");
+  addRow(["Key", "Value"]);
+  const pricingStart = rows.length + 1;
+  const pricingRows = {};
+  pricingRows.weeklyThresholdNights = addRow(["weeklyThresholdNights", metadata.pricingRules.weeklyThresholdNights]);
+  pricingRows.nhMealsRoomsTaxPct = addRow(["nhMealsRoomsTaxPct", metadata.pricingRules.nhMealsRoomsTaxPct / 100]);
+  pricingRows.depositAmount = addRow(["depositAmount", metadata.pricingRules.depositAmount]);
+  pricingRows.secondPaymentDaysBeforeStart = addRow(["secondPaymentDaysBeforeStart", metadata.pricingRules.paymentSchedule.secondPaymentDaysBeforeStart]);
+  pricingRows.finalPaymentDaysBeforeStart = addRow(["finalPaymentDaysBeforeStart", metadata.pricingRules.paymentSchedule.finalPaymentDaysBeforeStart]);
+  pricingRows.fullRefundDaysBeforeStart = addRow(["fullRefundDaysBeforeStart", metadata.pricingRules.cancellation.fullRefundDaysBeforeStart]);
+  pricingRows.partialRefundDaysBeforeStart = addRow(["partialRefundDaysBeforeStart", metadata.pricingRules.cancellation.partialRefundDaysBeforeStart]);
+  pricingRows.partialRefundPctExcludingDeposit = addRow(["partialRefundPctExcludingDeposit", metadata.pricingRules.cancellation.partialRefundPctExcludingDeposit / 100]);
+  pricingRows.depositIsNonRefundable = addRow(["depositIsNonRefundable", metadata.pricingRules.cancellation.depositIsNonRefundable]);
+  addNamedTable("metadataPricingRules", pricingStart, rows.length, 1, 2);
+  addNamedCell("metadataWeeklyThresholdNights", pricingRows.weeklyThresholdNights, 2);
+  addNamedCell("metadataNhMealsRoomsTaxPct", pricingRows.nhMealsRoomsTaxPct, 2);
+  addNamedCell("metadataDepositAmount", pricingRows.depositAmount, 2);
+  addNamedCell("metadataSecondPaymentDaysBeforeStart", pricingRows.secondPaymentDaysBeforeStart, 2);
+  addNamedCell("metadataFinalPaymentDaysBeforeStart", pricingRows.finalPaymentDaysBeforeStart, 2);
+  addNamedCell("metadataFullRefundDaysBeforeStart", pricingRows.fullRefundDaysBeforeStart, 2);
+  addRow([]);
+
+  addSection("Delivery settings");
+  addRow(["Key", "Value"]);
+  const deliveryStart = rows.length + 1;
+  const deliveryPriceRow = addRow(["pricePerMileOneWay", metadata.delivery.pricePerMileOneWay]);
+  const deliveryMinimumRow = addRow(["minimumFee", metadata.delivery.minimumFee]);
+  addNamedTable("metadataDeliverySettings", deliveryStart, rows.length, 1, 2);
+  addNamedCell("metadataDeliveryPricePerMile", deliveryPriceRow, 2);
+  addNamedCell("metadataMinimumDeliveryFee", deliveryMinimumRow, 2);
+  addNamedCell("deliveryPricePerMile", deliveryPriceRow, 2);
+  addNamedCell("minDeliveryFee", deliveryMinimumRow, 2);
+  addRow([]);
+
+  addSection("Delivery drivers");
+  addRow(["ID", "Name", "Round-trip MPG", "Fuel type"]);
+  const driverStart = rows.length + 1;
+  const driverRows = new Map();
+  metadata.delivery.drivers.forEach(driver => {
+    const row = addRow([
+      driver.id,
+      driver.name,
+      driver.roundTripMpg,
+      String(driver.fuelType).trim().toLowerCase()
+    ]);
+    driverRows.set(String(driver.id).trim().toLowerCase(), row);
+  });
+  addNamedTable("metadataDriverList", driverStart, rows.length, 1, 4);
+  addNamedCell("RT_MPG_Shane", driverRows.get("shane"), 3);
+  addRow([]);
+
+  addSection("Campers");
+  addRow(["ID", "Website Key", "Short Name", "Full Name", "Daily Base Rate", "Rentable", "For Sale", "Active", "Rental Visible", "Sale Visible"]);
+  const camperStart = rows.length + 1;
+  metadata.campers.forEach(camper => addRow([
+    camper.id,
+    camper.websiteKey,
+    camper.shortName,
+    camper.fullName,
+    camper.dailyBaseRate,
+    camper.status.rentable,
+    camper.status.forSale,
+    camper.status.active,
+    camper.website.rentalVisible,
+    camper.website.saleVisible
+  ]));
+  addNamedTable("metadataCamperTable", camperStart, rows.length, 1, 10);
+  addNamedTable("metadataCamperList", camperStart, rows.length, 3, 3);
+  addNamedTable("metadataCamperBaseRates", camperStart, rows.length, 5, 5);
+  addRow([]);
+
+  addSection("Rate tiers");
+  addRow(["ID", "Label", "Nightly Discount", "Weekly Discount"]);
+  const tierStart = rows.length + 1;
+  metadata.rateTiers.forEach(tier => addRow([
+    tier.id,
+    tier.label,
+    tier.discountPct.nightly / 100,
+    tier.discountPct.weekly / 100
+  ]));
+  addNamedTable("metadataRateTierTable", tierStart, rows.length, 1, 4);
+  addNamedTable("metadataRateTierList", tierStart, rows.length, 2, 2);
+  addNamedTable("metadataNightlyDiscounts", tierStart, rows.length, 3, 3);
+  addNamedTable("metadataWeeklyDiscounts", tierStart, rows.length, 4, 4);
+  addRow([]);
+
+  addSection("Holidays");
+  addRow(["ID", "Label", "Surcharge", "Description"]);
+  const holidayStart = rows.length + 1;
+  metadata.holidays.forEach(holiday => addRow([
+    holiday.id,
+    holiday.label,
+    holiday.surchargePct / 100,
+    holiday.description
+  ]));
+  addNamedTable("metadataHolidayTable", holidayStart, rows.length, 1, 4);
+  addNamedTable("metadataHolidayList", holidayStart, rows.length, 2, 2);
+  addNamedTable("metadataHolidayRates", holidayStart, rows.length, 3, 3);
+  addNamedTable("metadataHolidayDescriptions", holidayStart, rows.length, 4, 4);
+  addRow([]);
+
+  addSection("Fees");
+  addRow(["ID", "Label", "Amount", "Description"]);
+  const feeStart = rows.length + 1;
+  const feeRows = new Map();
+  metadata.fees.forEach(fee => {
+    const row = addRow([fee.id, fee.label, fee.amount, fee.description]);
+    feeRows.set(String(fee.id).trim().toLowerCase(), row);
+  });
+  addNamedTable("metadataFeeTable", feeStart, rows.length, 1, 4);
+  addNamedTable("metadataFeeList", feeStart, rows.length, 2, 2);
+  addNamedTable("metadataFeeAmounts", feeStart, rows.length, 3, 3);
+  addNamedTable("metadataFeeLookup", feeStart, rows.length, 2, 3);
+  addNamedCell("metadataDumpingFee", feeRows.get("dumping-fee"), 3);
+  addNamedCell("dumpingFee", feeRows.get("dumping-fee"), 3);
+  addRow([]);
+
+  addSection("Add-ons");
+  addRow(["ID", "Label", "Amount", "Description"]);
+  const addOnStart = rows.length + 1;
+  metadata.addOns.forEach(addOn => addRow([addOn.id, addOn.label, addOn.amount, addOn.description]));
+  addNamedTable("metadataAddOnTable", addOnStart, rows.length, 1, 4);
+  addNamedTable("metadataAddOnList", addOnStart, rows.length, 2, 2);
+  addNamedTable("metadataAddOnAmounts", addOnStart, rows.length, 3, 3);
+  addNamedTable("metadataAddOnLookup", addOnStart, rows.length, 2, 3);
+  addRow([]);
+
+  addSection("Google assets");
+  addRow(["Type", "Key", "Name", "ID"]);
+  const assetStart = rows.length + 1;
+  [
+    ["calendar", "calendar", metadata.googleAssets.calendar],
+    ["folder", "topLevelFolder", metadata.googleAssets.topLevelFolder],
+    ["folder", "quoteFolder", metadata.googleAssets.quoteFolder],
+    ["spreadsheet", "contactsSpreadsheet", metadata.googleAssets.contactsSpreadsheet],
+    ["template", "quoteAgreement", metadata.googleAssets.templates.quoteAgreement],
+    ["template", "quoteEmail", metadata.googleAssets.templates.quoteEmail],
+    ["template", "invoice", metadata.googleAssets.templates.invoice]
+  ].forEach(item => addRow([item[0], item[1], item[2].name || item[2].sheetName || "", item[2].id]));
+  addNamedTable("metadataGoogleAssetList", assetStart, rows.length, 1, 4);
+
+  return {
+    rows: rows,
+    sectionRows: sections,
+    namedRanges: namedRanges,
+    percentRanges: [
+      `B${pricingRows.nhMealsRoomsTaxPct}`,
+      `B${pricingRows.partialRefundPctExcludingDeposit}`,
+      `C${tierStart}:D${tierStart + metadata.rateTiers.length - 1}`,
+      `C${holidayStart}:C${holidayStart + metadata.holidays.length - 1}`
+    ],
+    currencyRanges: [
+      `B${pricingRows.depositAmount}`,
+      `B${deliveryPriceRow}:B${deliveryMinimumRow}`,
+      `E${camperStart}:E${camperStart + metadata.campers.length - 1}`,
+      `C${feeStart}:C${feeStart + metadata.fees.length - 1}`,
+      `C${addOnStart}:C${addOnStart + metadata.addOns.length - 1}`
+    ]
+  };
+}
+
+function replaceNamedRange_(spreadsheet, name, range) {
+  spreadsheet.getNamedRanges()
+    .filter(namedRange => namedRange.getName() === name)
+    .forEach(namedRange => namedRange.remove());
+  spreadsheet.setNamedRange(name, range);
+}
+
+function removeNamedRanges_(spreadsheet, names) {
+  const namesToRemove = new Set(names);
+  spreadsheet.getNamedRanges()
+    .filter(namedRange => namesToRemove.has(namedRange.getName()))
+    .forEach(namedRange => namedRange.remove());
+}
+
+function migrateQuoteToMetadata_(spreadsheet) {
+  const quoteSheet = spreadsheet.getSheetByName(QUOTE_SHEET_NAME);
+  if (!quoteSheet) throw new Error(`Sheet '${QUOTE_SHEET_NAME}' not found.`);
+
+  quoteSheet.getRange("A2").setValue("Static pricing and camper data comes from the generated 'metadata' tab. Runtime values remain local.");
+  quoteSheet.getRange("C8").setFormula('=IF(ISNUMBER(B8),TEXT(B8,"ddd"),"invalid date")');
+  quoteSheet.getRange("C9").setFormula('=IF(ISNUMBER(B9),TEXT(B9,"ddd"),"invalid date")');
+  quoteSheet.getRange("B11").setFormula('=IFERROR(SUMIF(metadataHolidayList,C11,metadataHolidayRates),"invalid input")');
+  quoteSheet.getRange("D11").setFormula('=IFERROR(INDEX(metadataHolidayDescriptions,MATCH(C11,metadataHolidayList,0)),"")');
+  quoteSheet.getRange("C14").setFormula('=IF(ISNUMBER(B30),B30,IFERROR(INDEX(metadataCamperBaseRates,MATCH(B13,metadataCamperList,0))*(1-IF(C10="weekly",INDEX(metadataWeeklyDiscounts,MATCH(B14,metadataRateTierList,0)),INDEX(metadataNightlyDiscounts,MATCH(B14,metadataRateTierList,0))))*(1+B11),"invalid input"))');
+  quoteSheet.getRange("B17").setFormula('=IF(ISNUMBER(B28),B28,IF(B16="YES",MAX(C17*metadataDeliveryPricePerMile,metadataMinimumDeliveryFee),0))');
+  quoteSheet.getRange("E17").setFormula("=metadataDeliveryPricePerMile");
+  quoteSheet.getRange("B18").setFormula('=IFERROR(VLOOKUP(C18,metadataAddOnLookup,2,FALSE),0)+IFERROR(VLOOKUP(D18,metadataAddOnLookup,2,FALSE),0)+IFERROR(VLOOKUP(E18,metadataAddOnLookup,2,FALSE),0)+IFERROR(VLOOKUP(F18,metadataAddOnLookup,2,FALSE),0)');
+  quoteSheet.getRange("B20").setFormula('=IFERROR(VLOOKUP(C20,metadataFeeLookup,2,FALSE),0)+IFERROR(VLOOKUP(D20,metadataFeeLookup,2,FALSE),0)+IFERROR(VLOOKUP(E20,metadataFeeLookup,2,FALSE),0)');
+  quoteSheet.getRange("B21").setFormula("=IF(ISNUMBER(B32),0,IF(ISNUMBER(B29),B29,metadataNhMealsRoomsTaxPct*B15))");
+  quoteSheet.getRange("B23").setFormula("=metadataDepositAmount");
+  quoteSheet.getRange("C24").setFormula("=B8-metadataSecondPaymentDaysBeforeStart");
+  quoteSheet.getRange("C25").setFormula("=B8-metadataFinalPaymentDaysBeforeStart");
+  quoteSheet.getRange("B26").setFormula("=B8-metadataFullRefundDaysBeforeStart");
+
+  const validations = [
+    ["B13", "metadataCamperList"],
+    ["B14", "metadataRateTierList"],
+    ["C11", "metadataHolidayList"],
+    ["C18:F18", "metadataAddOnList"],
+    ["C20:E20", "metadataFeeList"]
+  ];
+  validations.forEach(item => {
+    const sourceRange = spreadsheet.getRangeByName(item[1]);
+    const rule = SpreadsheetApp.newDataValidation()
+      .requireValueInRange(sourceRange, true)
+      .setAllowInvalid(false)
+      .build();
+    quoteSheet.getRange(item[0]).setDataValidation(rule);
+  });
+}
+
+function isSummaryCamperFormula_(formula) {
+  return /^=INDEX\(metadataCamperList,\d+,1\)$/i.test(String(formula || "").replace(/\s+/g, ""));
+}
+
+function migrateSummaryToMetadata_(spreadsheet, metadata) {
+  const summarySheet = spreadsheet.getSheetByName(SUMMARY_SHEET_NAME);
+  if (!summarySheet) throw new Error(`Sheet '${SUMMARY_SHEET_NAME}' not found.`);
+  if (!metadata || !Array.isArray(metadata.campers) || !metadata.campers.length) {
+    throw new Error("Metadata must include at least one camper before migrating the Summary sheet.");
+  }
+
+  const outputRow = 21;
+  const firstOutputColumn = 3;
+  const camperCount = metadata.campers.length;
+  const columnsToInspect = Math.max(
+    camperCount,
+    summarySheet.getLastColumn() - firstOutputColumn + 1
+  );
+  const existingRange = summarySheet.getRange(outputRow, firstOutputColumn, 1, columnsToInspect);
+  const existingFormulas = existingRange.getFormulas()[0];
+  const existingValues = existingRange.getValues()[0];
+
+  for (let index = 0; index < camperCount; index++) {
+    const hasContent = existingFormulas[index] || existingValues[index] !== "";
+    if (hasContent && !isSummaryCamperFormula_(existingFormulas[index])) {
+      const cell = existingRange.getCell(1, index + 1).getA1Notation();
+      throw new Error(`Cannot write camper summary formulas because ${SUMMARY_SHEET_NAME}!${cell} contains unmanaged content.`);
+    }
+  }
+
+  existingFormulas.forEach((formula, index) => {
+    if (isSummaryCamperFormula_(formula)) {
+      existingRange.getCell(1, index + 1).clearContent();
+    }
+  });
+
+  const camperFormulas = metadata.campers.map((camper, index) =>
+    `=INDEX(metadataCamperList,${index + 1},1)`
+  );
+  summarySheet
+    .getRange(outputRow, firstOutputColumn, 1, camperCount)
+    .setFormulas([camperFormulas]);
+}
+
+function migrateBookingsToMetadata_(spreadsheet) {
+  const bookingsSheet = spreadsheet.getSheetByName(BOOKINGS_SHEET_NAME);
+  if (!bookingsSheet) throw new Error(`Sheet '${BOOKINGS_SHEET_NAME}' not found.`);
+
+  bookingsSheet.getRange("K:K").clearDataValidations();
+
+  const mileageCostRange = bookingsSheet.getRange(
+    BOOKINGS_HEADER_ROW + 1,
+    8,
+    Math.max(bookingsSheet.getLastRow() - BOOKINGS_HEADER_ROW, 1),
+    1
+  );
+  mileageCostRange.getFormulas().forEach((row, index) => {
+    const formula = row[0];
+    if (!formula || formula.indexOf("RT_MPG_Shane") === -1) return;
+
+    mileageCostRange.getCell(index + 1, 1).setFormula(
+      formula.replace(/RT_MPG_Shane/g, 'VLOOKUP("shane",metadataDriverList,3,FALSE)')
+    );
+  });
+}
+
+function migrateContractDataToMetadata_(spreadsheet) {
+  const contractDataSheet = spreadsheet.getSheetByName(CONTRACT_DATA_SHEET_NAME);
+  if (!contractDataSheet) throw new Error(`Sheet '${CONTRACT_DATA_SHEET_NAME}' not found.`);
+
+  contractDataSheet.getRange("B6").setFormula(
+    '=IFERROR(INDEX(metadataCamperTable,MATCH(Quote!B13,metadataCamperList,0),4),"Error")'
+  );
+  contractDataSheet.getRange("C12").setFormula(
+    '=if(Quote!B16="YES",CONCATENATE("based on ",Quote!C17, " mi from Milford, NH @$", Quote!E17, "/mi with $", metadataMinimumDeliveryFee, " minimum"),"customer will tow to rental site and return to owner")'
+  );
+  contractDataSheet.getRange("A16").setFormula(
+    '=CONCATENATE("Note: costs assume campsite will have electric/water/septic; otherwise a $",metadataDumpingFee," dumping fee will be applied")'
+  );
+}
+
+function migrateMileageToMetadata_(spreadsheet) {
+  const mileageSheet = spreadsheet.getSheetByName(MILEAGE_SHEET_NAME);
+  if (!mileageSheet) throw new Error(`Sheet '${MILEAGE_SHEET_NAME}' not found.`);
+
+  mileageSheet.getRange("C6").setFormula(
+    "=VLOOKUP(LOWER($B$2),metadataDriverList,3,FALSE)"
+  );
+  mileageSheet.getRange("D4").setFormula(
+    '=SWITCH(VLOOKUP(LOWER($B$2),metadataDriverList,4,FALSE),"gasoline",gasCurrentPrice,"diesel",dieselCurrentPrice,NA())'
+  );
+  mileageSheet.getRange("H4").setFormula("=metadataDeliveryPricePerMile");
+  mileageSheet.getRange("I4").setFormula("=MAX(H4*A4,metadataMinimumDeliveryFee)");
+
+  const historicalMileageCostRange = mileageSheet.getRange("E35:E37");
+  historicalMileageCostRange.getFormulas().forEach((row, index) => {
+    const formula = row[0];
+    if (!formula || formula.indexOf("RT_MPG_Shane") === -1) return;
+
+    historicalMileageCostRange.getCell(index + 1, 1).setFormula(
+      formula.replace(/RT_MPG_Shane/g, 'VLOOKUP("shane",metadataDriverList,3,FALSE)')
+    );
+  });
+}
+
+function syncMetadataToSheet_(spreadsheet, metadata) {
+  const targetSpreadsheet = spreadsheet || SpreadsheetApp.getActiveSpreadsheet();
+  const sourceMetadata = metadata || getMetadata_(true);
+  const layout = buildMetadataSheetData_(sourceMetadata);
+  let sheet = targetSpreadsheet.getSheetByName(METADATA_SHEET_NAME);
+  if (!sheet) sheet = targetSpreadsheet.insertSheet(METADATA_SHEET_NAME);
+
+  sheet.clear();
+  if (sheet.getMaxRows() < layout.rows.length) {
+    sheet.insertRowsAfter(sheet.getMaxRows(), layout.rows.length - sheet.getMaxRows());
+  }
+  if (sheet.getMaxColumns() < 10) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), 10 - sheet.getMaxColumns());
+  }
+  sheet.getRange(1, 1, layout.rows.length, 10).setValues(layout.rows);
+  sheet.setFrozenRows(1);
+  sheet.getRange(1, 1, 1, 10).setFontWeight("bold").setBackground("#eeeeee");
+  layout.sectionRows.forEach(row => {
+    sheet.getRange(row, 1, 1, 10).setFontWeight("bold").setBackground("#eeeeee");
+    sheet.getRange(row + 1, 1, 1, 10).setFontWeight("bold");
+  });
+  layout.percentRanges.forEach(range => sheet.getRange(range).setNumberFormat("0.00%"));
+  layout.currencyRanges.forEach(range => sheet.getRange(range).setNumberFormat("$#,##0.00"));
+  sheet.setColumnWidth(1, 220);
+  sheet.setColumnWidth(2, 180);
+  sheet.setColumnWidth(3, 190);
+  sheet.setColumnWidth(4, 300);
+  for (let column = 5; column <= 10; column++) sheet.setColumnWidth(column, 120);
+
+  Object.keys(layout.namedRanges).forEach(name => {
+    const definition = layout.namedRanges[name];
+    const range = sheet.getRange(definition.row, definition.column, definition.numRows, definition.numColumns);
+    replaceNamedRange_(targetSpreadsheet, name, range);
+  });
+  removeNamedRanges_(targetSpreadsheet, ["driverData", "RT_MPG_Aaron", "FeeList", "addOnList"]);
+
+  migrateQuoteToMetadata_(targetSpreadsheet);
+  migrateSummaryToMetadata_(targetSpreadsheet, sourceMetadata);
+  migrateBookingsToMetadata_(targetSpreadsheet);
+  migrateContractDataToMetadata_(targetSpreadsheet);
+  migrateMileageToMetadata_(targetSpreadsheet);
+  SpreadsheetApp.flush();
+  return sheet;
+}
+
+function syncMetadataToSheet() {
+  const sheet = syncMetadataToSheet_(SpreadsheetApp.getActiveSpreadsheet(), getMetadata_(true));
+  SpreadsheetApp.getActiveSpreadsheet().toast(
+    `Synced ${sheet.getLastRow()} metadata rows and refreshed metadata-backed workbook formulas/dropdowns.`,
+    "Metadata Sync",
+    8
+  );
+}
+
+/**
  * Helper functions for distance and duration calculations
  */
-const HOME_ADDRESS = "36 Juniper Dr, Amherst, NH";
 const ROUTE_CACHE_TTL_SECONDS = 21600;
+const ROUTE_CACHE_VERSION_PROPERTY = "HHR_ROUTE_CACHE_VERSION";
 
 function MilesFromHome(address) {
   const routeSummary = getRouteSummaryFromHome_(address);
@@ -23,8 +614,11 @@ function getRouteSummaryFromHome_(address) {
   const destination = String(address || "").trim();
   if (!destination) return { miles: "unknown", hours: "unknown" };
 
+  const origin = String(getMetadata_().business.homeAddress || "").trim();
+  if (!origin) throw new Error("Metadata business.homeAddress is required for route calculations.");
+
   const cache = CacheService.getScriptCache();
-  const cacheKey = getRouteCacheKey_(destination);
+  const cacheKey = getRouteCacheKey_(origin, destination);
   const cachedSummary = cache.get(cacheKey);
   if (cachedSummary) {
     try {
@@ -35,7 +629,7 @@ function getRouteSummaryFromHome_(address) {
   }
 
   const directions = Maps.newDirectionFinder()
-    .setOrigin(HOME_ADDRESS)
+    .setOrigin(origin)
     .setDestination(destination)
     .setMode(Maps.DirectionFinder.Mode.DRIVING)
     .getDirections();
@@ -73,8 +667,44 @@ function getRouteSummaryFromHome_(address) {
   return routeSummary;
 }
 
-function getRouteCacheKey_(destination) {
-  return `route:${String(destination || "").trim().toLowerCase()}`;
+function getRouteCacheVersion_() {
+  const storedVersion = PropertiesService.getScriptProperties().getProperty(ROUTE_CACHE_VERSION_PROPERTY);
+  const parsedVersion = Number.parseInt(storedVersion, 10);
+  return Number.isSafeInteger(parsedVersion) && parsedVersion > 0 ? parsedVersion : 1;
+}
+
+function getRouteCacheKey_(origin, destination) {
+  const normalizedRoute = [origin, destination]
+    .map(value => String(value || "").trim().toLowerCase())
+    .join("\n");
+  const digest = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    normalizedRoute,
+    Utilities.Charset.UTF_8
+  ).map(byte => (`0${((byte + 256) % 256).toString(16)}`).slice(-2)).join("");
+
+  return `route:v${getRouteCacheVersion_()}:${digest}`;
+}
+
+/**
+ * Clears cached metadata and invalidates all route cache entries.
+ * Run manually after publishing metadata or changing the business home address.
+ */
+function clearMetadataAndRouteCaches() {
+  const cache = CacheService.getScriptCache();
+  cache.remove(METADATA_CACHE_KEY);
+
+  const scriptProperties = PropertiesService.getScriptProperties();
+  const currentVersion = getRouteCacheVersion_();
+  const nextVersion = currentVersion >= Number.MAX_SAFE_INTEGER ? 1 : currentVersion + 1;
+  scriptProperties.setProperty(ROUTE_CACHE_VERSION_PROPERTY, String(nextVersion));
+
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  if (spreadsheet) {
+    spreadsheet.toast("Metadata and route caches cleared.", "Cache Cleared", 5);
+  }
+
+  return nextVersion;
 }
 
 
@@ -126,28 +756,17 @@ function showMessage_(title, message, options) {
 
 
 /**
- * Shared configuration.
- *
- * IMPORTANT: For the calendar, prefer Calendar ID over display name.
- * To fully resolve shared-calendar lookup issues, paste the Calendar ID for
- * the real "Happy Hooker Rentals" calendar below. If left blank, the script
- * falls back to the display name for backward compatibility.
+ * Runtime workflow configuration. Static business values and Google asset
+ * pointers are read from metadata.json through getMetadata_().
  */
-const HHR_CALENDAR_ID = "647d50cd910f97384c20ba658a3a4fc3f9a6c4970a4254b227cba66b285a8fca@group.calendar.google.com";
-const HHR_CALENDAR_NAME = "Happy Hooker Rentals";
-const QUOTE_TEMPLATE_DOC_ID = "";
-const QUOTE_TEMPLATE_DOC_NAME = "TemplateRentalAgreement-2026";
-const QUOTE_EMAIL_TEMPLATE_DOC_ID = "";
-const QUOTE_EMAIL_TEMPLATE_DOC_NAME = "TemplateQuoteEmail";
 const QUOTE_SHEET_NAME = "Quote";
+const SUMMARY_SHEET_NAME = "Summary";
+const CONTRACT_DATA_SHEET_NAME = "Contract data";
+const MILEAGE_SHEET_NAME = "Mileage";
 const QUOTE_TRIGGER_CHECKBOX_A1 = "D3";
 const QUOTE_TRIGGER_STATUS_A1 = "E3";
 const CHECKBOX_CONFIRM_WINDOW_MS = 30000;
-const QUOTE_FOLDER_ID = "1-uRn7J6lDS9D6Xa7SH6QJb1TOXdg4DlJ";
-const INVOICE_TEMPLATE_ID = "";
-const INVOICE_TEMPLATE_NAME = "TemplateInvoice-2026";
 const WAITING_SHEET_NAME = "Waiting to Book";
-const CONTACTS_SPREADSHEET_ID = "1GVOBCWJyu-61WxOjqkPDQg5jDE6RNtr4SmwVgMimxas";
 const CONTACTS_SHEET_NAME = "Contacts";
 const BOOKINGS_SHEET_NAME = "Bookings";
 const INCOME_SHEET_NAME = "Income";
@@ -164,25 +783,30 @@ const CONTACTS_FIRST_DATA_ROW = 3;
 const CONTACTS_SELECT_COLUMN = 1;
 const CONTACTS_SELECT_ALL_RANGE_NAME = "selectAll";
 const CONTACTS_EMAIL_DRAFT_SUBJECT = "Happy Hooker Rentals";
-const HHR_EMAIL_ADDRESS = "happyhookerrentals@gmail.com";
+
+function getBusinessEmail_() {
+  return String(getMetadata_().business.contactEmail || "").trim();
+}
 
 function getHhrCalendar_() {
-  if (HHR_CALENDAR_ID && HHR_CALENDAR_ID.trim() !== "") {
-    return CalendarApp.getCalendarById(HHR_CALENDAR_ID.trim());
+  const calendarConfig = getGoogleAsset_("calendar");
+  const calendarId = String(calendarConfig.id || "").trim();
+  const calendarName = String(calendarConfig.name || "").trim();
+  if (calendarId) {
+    return CalendarApp.getCalendarById(calendarId);
   }
 
-  const calendars = CalendarApp.getCalendarsByName(HHR_CALENDAR_NAME);
+  const calendars = CalendarApp.getCalendarsByName(calendarName);
   if (calendars && calendars.length > 0) return calendars[0];
-
-  // Legacy fallback. Some calendars can be looked up by ID-like string here.
-  return CalendarApp.getCalendarById(HHR_CALENDAR_NAME);
+  return null;
 }
 
 function getHhrCalendarLookupDescription_() {
-  if (HHR_CALENDAR_ID && HHR_CALENDAR_ID.trim() !== "") {
-    return `calendar ID '${HHR_CALENDAR_ID}'`;
-  }
-  return `calendar name '${HHR_CALENDAR_NAME}'`;
+  const calendarConfig = getGoogleAsset_("calendar");
+  const calendarId = String(calendarConfig.id || "").trim();
+  return calendarId
+    ? `calendar ID '${calendarId}'`
+    : `calendar name '${String(calendarConfig.name || "").trim()}'`;
 }
 
 function getDriveFileByIdOrName_(fileId, fileName) {
@@ -216,7 +840,7 @@ function getIncomeExpensesSpreadsheetNamesForYear_(year) {
 }
 
 function getQuoteRootFolder_() {
-  const configuredFolder = DriveApp.getFolderById(QUOTE_FOLDER_ID);
+  const configuredFolder = DriveApp.getFolderById(getGoogleAsset_("quoteFolder").id);
   const configuredName = String(configuredFolder.getName() || "").trim();
 
   if (/^\d{4}$/.test(configuredName)) {
@@ -228,7 +852,7 @@ function getQuoteRootFolder_() {
 }
 
 function getConfiguredQuoteFolder_() {
-  return DriveApp.getFolderById(QUOTE_FOLDER_ID);
+  return DriveApp.getFolderById(getGoogleAsset_("quoteFolder").id);
 }
 
 function getWorkflowSearchFolders_() {
@@ -702,14 +1326,14 @@ function getContactsSheet_() {
   const contactsSheet = contactsSpreadsheet.getSheetByName(CONTACTS_SHEET_NAME);
 
   if (!contactsSheet) {
-    throw new Error(`Contacts sheet '${CONTACTS_SHEET_NAME}' not found in spreadsheet ${CONTACTS_SPREADSHEET_ID}.`);
+    throw new Error(`Contacts sheet '${CONTACTS_SHEET_NAME}' not found in the metadata-configured contacts spreadsheet.`);
   }
 
   return contactsSheet;
 }
 
 function getContactsSpreadsheet_() {
-  return SpreadsheetApp.openById(CONTACTS_SPREADSHEET_ID);
+  return SpreadsheetApp.openById(getGoogleAsset_("contactsSpreadsheet").id);
 }
 
 function buildCheckboxRule_() {
@@ -720,7 +1344,7 @@ function getContactsSelectAllRange_() {
   const contactsSpreadsheet = getContactsSpreadsheet_();
   const selectAllRange = contactsSpreadsheet.getRangeByName(CONTACTS_SELECT_ALL_RANGE_NAME);
   if (!selectAllRange) {
-    throw new Error(`Named range '${CONTACTS_SELECT_ALL_RANGE_NAME}' not found in spreadsheet ${CONTACTS_SPREADSHEET_ID}.`);
+    throw new Error(`Named range '${CONTACTS_SELECT_ALL_RANGE_NAME}' not found in the metadata-configured contacts spreadsheet.`);
   }
   return selectAllRange;
 }
@@ -736,6 +1360,9 @@ function addSpreadsheetMenu_() {
       .addItem("Setup Entry Row Checkboxes", "setupEntryRowCheckboxes")
       .addItem("Setup Contacts Selection", "setupContactsSelection")
       .addItem("Setup Triggers", "setupOnEditTrigger")
+      .addSeparator()
+      .addItem("Sync Metadata", "syncMetadataToSheet")
+      .addItem("Clear Metadata & Route Caches", "clearMetadataAndRouteCaches")
       .addToUi();
   } catch (e) {
     Logger.log("Could not create spreadsheet menu: " + e);
@@ -829,7 +1456,7 @@ function findExistingContactRow_(sheet, headerRow, nextRow, contactInfo) {
   const normalizedName = normalizeContactValue_(contactInfo.renterName);
   const normalizedPhone = normalizePhoneNumberForMatch_(contactInfo.renterPhone);
   const normalizedEmail = normalizeContactValue_(contactInfo.renterEmail);
-  const useNameOnlyMatch = normalizedEmail === "outdoorsy" || normalizedEmail === normalizeContactValue_(HHR_EMAIL_ADDRESS);
+  const useNameOnlyMatch = normalizedEmail === "outdoorsy" || normalizedEmail === normalizeContactValue_(getBusinessEmail_());
   const hasMeaningfulEmail = isMeaningfulContactEmail_(normalizedEmail);
   const hasMeaningfulPhone = normalizedPhone !== "";
 
@@ -866,7 +1493,7 @@ function normalizePhoneNumberForMatch_(value) {
 function isMeaningfulContactEmail_(normalizedEmail) {
   if (!normalizedEmail) return false;
   if (normalizedEmail === "outdoorsy" || normalizedEmail === "n/a") return false;
-  if (normalizedEmail === normalizeContactValue_(HHR_EMAIL_ADDRESS)) return false;
+  if (normalizedEmail === normalizeContactValue_(getBusinessEmail_())) return false;
   return true;
 }
 
@@ -928,13 +1555,14 @@ function clearAllContactSelections_(contactsSheet) {
 
 function getPreferredDraftFromAddress_() {
   const activeEmail = Session.getActiveUser().getEmail();
-  if (String(activeEmail || "").toLowerCase() === HHR_EMAIL_ADDRESS.toLowerCase()) {
-    return HHR_EMAIL_ADDRESS;
+  const businessEmail = getBusinessEmail_();
+  if (String(activeEmail || "").toLowerCase() === businessEmail.toLowerCase()) {
+    return businessEmail;
   }
 
   const aliases = GmailApp.getAliases().map(alias => String(alias || "").toLowerCase());
-  if (aliases.includes(HHR_EMAIL_ADDRESS.toLowerCase())) {
-    return HHR_EMAIL_ADDRESS;
+  if (aliases.includes(businessEmail.toLowerCase())) {
+    return businessEmail;
   }
 
   return "";
@@ -944,7 +1572,7 @@ function isUsableRecipientEmail_(value) {
   const normalizedEmail = normalizeContactValue_(value);
   if (!normalizedEmail) return false;
   if (normalizedEmail === "outdoorsy" || normalizedEmail === "n/a") return false;
-  if (normalizedEmail === normalizeContactValue_(HHR_EMAIL_ADDRESS)) return false;
+  if (normalizedEmail === normalizeContactValue_(getBusinessEmail_())) return false;
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail);
 }
 
@@ -1212,9 +1840,10 @@ function createQuoteDraftEmail_(renterEmail, renterName, agreementFile) {
     throw new Error("No renter email found.");
   }
 
-  const templateFile = getDriveFileByIdOrName_(QUOTE_EMAIL_TEMPLATE_DOC_ID, QUOTE_EMAIL_TEMPLATE_DOC_NAME);
+  const templateConfig = getGoogleAsset_("templates.quoteEmail");
+  const templateFile = getDriveFileByIdOrName_(templateConfig.id, templateConfig.name);
   if (!templateFile) {
-    throw new Error(`Email template '${QUOTE_EMAIL_TEMPLATE_DOC_NAME}' not found.`);
+    throw new Error(`Email template '${templateConfig.name}' not found.`);
   }
   const firstName = getFirstName_(renterName);
 
@@ -1353,15 +1982,16 @@ function createQuote(options) {
     }
 
     // STEP 2: Copy the rental agreement template into the booking year's folder
-    const templateFile = getDriveFileByIdOrName_(QUOTE_TEMPLATE_DOC_ID, QUOTE_TEMPLATE_DOC_NAME);
+    const templateConfig = getGoogleAsset_("templates.quoteAgreement");
+    const templateFile = getDriveFileByIdOrName_(templateConfig.id, templateConfig.name);
     if (!templateFile) {
-      addStatus_(statusLog, "Template lookup", false, `Template document '${QUOTE_TEMPLATE_DOC_NAME}' not found.`);
+      addStatus_(statusLog, "Template lookup", false, `Template document '${templateConfig.name}' not found.`);
       updateQuoteTriggerStatusFromLog_(bookingId, statusLog, true);
       showStatusLog_("Create Quote Status", statusLog);
       return;
     }
 
-    addStatus_(statusLog, "Template lookup", true, `Found ${QUOTE_TEMPLATE_DOC_NAME}.`);
+    addStatus_(statusLog, "Template lookup", true, `Found ${templateConfig.name}.`);
 
     const safeBooking = bookingId.replace(/\s+/g, "");
     const safeName = renterName.replace(/\s+/g, "");
@@ -2093,9 +2723,10 @@ function findRentalAgreementFile_(bookingId, renterName, startDateValue) {
 }
 
 function createInvoiceFromTemplate_(bookingId, renterName, startDateValue) {
-  const templateFile = getDriveFileByIdOrName_(INVOICE_TEMPLATE_ID, INVOICE_TEMPLATE_NAME);
+  const templateConfig = getGoogleAsset_("templates.invoice");
+  const templateFile = getDriveFileByIdOrName_(templateConfig.id, templateConfig.name);
   if (!templateFile) {
-    throw new Error(`Invoice template '${INVOICE_TEMPLATE_NAME}' not found.`);
+    throw new Error(`Invoice template '${templateConfig.name}' not found.`);
   }
 
   const folder = getQuoteStorageFolderForDate_(startDateValue).yearFolder;
@@ -2894,7 +3525,7 @@ function setupOnEditTrigger() {
 
   try {
     addSpreadsheet_(SpreadsheetApp.getActive());
-    addSpreadsheet_(SpreadsheetApp.openById(CONTACTS_SPREADSHEET_ID));
+    addSpreadsheet_(getContactsSpreadsheet_());
 
     const workflowSpreadsheets = getAllWorkflowSpreadsheets_();
     workflowSpreadsheets.forEach(addSpreadsheet_);
