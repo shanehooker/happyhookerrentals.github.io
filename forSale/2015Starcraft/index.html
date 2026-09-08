@@ -37,7 +37,7 @@
 
     h2 { margin-top: 40px; text-align: center; }
 
-    /* ✅ Professional gallery layout (no distortion) */
+    /* Professional gallery layout (no distortion) */
     .gallery {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -59,7 +59,7 @@
 
     .gallery img {
       width: 100%;
-      height: auto;              /* key: preserve aspect ratio */
+      height: auto;
       display: block;
     }
 
@@ -73,6 +73,62 @@
     .solo {
       max-width: 640px;
       margin: 0 auto;
+    }
+
+    .video-card {
+      margin: 34px auto 10px;
+      padding: 22px;
+      max-width: 760px;
+      background: #f8fbfa;
+      border: 1px solid #d8e8e2;
+      border-radius: 14px;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+      text-align: center;
+    }
+
+    .video-card h2 {
+      margin-top: 0;
+      margin-bottom: 10px;
+    }
+
+    .video-card p {
+      margin: 0 auto 18px;
+      color: #555;
+      line-height: 1.45;
+      max-width: 580px;
+    }
+
+    .video-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 14px 24px;
+      border-radius: 999px;
+      background: #0b6e4f;
+      color: #fff;
+      font-weight: bold;
+      text-decoration: none;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.16);
+      transition: transform 0.12s ease, opacity 0.2s ease;
+    }
+
+    .video-button:hover {
+      transform: translateY(-2px);
+      opacity: 0.95;
+      text-decoration: none;
+    }
+
+    .play-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.22);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      line-height: 1;
     }
 
     .contact-box {
@@ -105,7 +161,7 @@
     .btn-email { background: #0b6e4f; color: #fff; }
     .btn-text  { background: #1e88e5; color: #fff; }
 
-    /* ✅ Lightbox */
+    /* Lightbox */
     .lightbox {
       position: fixed;
       inset: 0;
@@ -133,7 +189,7 @@
       align-items: center;
       justify-content: center;
       user-select: none;
-      touch-action: pan-y; /* allow vertical scroll feel, we detect horizontal swipes */
+      touch-action: pan-y;
     }
 
     .lightbox img {
@@ -186,15 +242,23 @@
       table, th, td { display: block; width: 100%; }
       th { margin-top: 15px; }
       .lb-btn { width: 42px; height: 42px; }
+
+      .video-card {
+        padding: 18px;
+      }
+
+      .video-button {
+        width: 100%;
+        box-sizing: border-box;
+      }
     }
   </style>
 </head>
 <body>
 
   <div class="container">
-
     <h1>2015 Starcraft AR-One 17RD</h1>
-    <div class="price">$6,500 OBRO</div>
+    <div class="price">$6,500</div>
     <div class="sale-note">Priced below comparable dealer listings for a quick private sale.</div>
     <div class="location">📍 Located in Milford, NH</div>
 
@@ -240,6 +304,23 @@
         </td>
       </tr>
     </table>
+
+    <section class="video-card" aria-labelledby="walkthrough-heading">
+      <h2 id="walkthrough-heading">Video Walkthrough</h2>
+      <p>
+        Take a quick video tour of the 2015 Starcraft AR-One 17RD before checking out the photos below.
+      </p>
+      <a
+        class="video-button"
+        href="https://photos.app.goo.gl/xuGjLo1ush8KZ9fc8"
+        target="_blank"
+        rel="noopener"
+        aria-label="Watch the 2015 Starcraft AR-One 17RD video walkthrough in a new tab"
+      >
+        <span class="play-icon" aria-hidden="true">▶</span>
+        Watch Video Walkthrough
+      </a>
+    </section>
 
     <h2>Exterior Photos</h2>
     <div class="gallery">
@@ -321,7 +402,6 @@
         <strong>or call 603-320-5247</strong>
       </div>
     </div>
-
   </div>
 
   <!-- Lightbox overlay -->
@@ -404,7 +484,7 @@
       if (e.key === "ArrowLeft") showPrev();
     });
 
-    // ✅ Swipe support (mobile)
+    // Swipe support (mobile)
     let touchStartX = 0;
     let touchStartY = 0;
 
