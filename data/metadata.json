@@ -60,7 +60,11 @@
     "weeklyThresholdNights": 7,
     "nhMealsRoomsTaxPct": 8.5,
     "depositAmount": 50,
+    "directBookingAverageSavingsPct": 20,
+    "petCleaningFeeMaximum": 250,
+    "smokeCleaningFeeMinimum": 500,
     "paymentSchedule": {
+      "secondPaymentPctOfBalance": 50,
       "secondPaymentDaysBeforeStart": 14,
       "finalPaymentDaysBeforeStart": 1
     },
@@ -68,7 +72,24 @@
       "fullRefundDaysBeforeStart": 14,
       "partialRefundDaysBeforeStart": 1,
       "partialRefundPctExcludingDeposit": 50,
-      "depositIsNonRefundable": true
+      "depositIsNonRefundable": true,
+      "refundTiers": [
+        {
+          "minimumDaysBeforeStart": 14,
+          "maximumDaysBeforeStart": null,
+          "refundPctExcludingDeposit": 100
+        },
+        {
+          "minimumDaysBeforeStart": 7,
+          "maximumDaysBeforeStart": 13,
+          "refundPctExcludingDeposit": 50
+        },
+        {
+          "minimumDaysBeforeStart": 0,
+          "maximumDaysBeforeStart": 6,
+          "refundPctExcludingDeposit": 25
+        }
+      ]
     }
   },
   "rateTiers": [

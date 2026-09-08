@@ -1,7 +1,10 @@
 (function () {
   "use strict";
 
-  const METADATA_URL = "data/metadata.json";
+  const metadataScriptUrl = document.currentScript && document.currentScript.src;
+  const METADATA_URL = metadataScriptUrl
+    ? new URL("data/metadata.json", metadataScriptUrl).href
+    : "data/metadata.json";
 
   function assert(condition, message) {
     if (!condition) throw new Error(`Invalid metadata: ${message}`);
@@ -33,6 +36,40 @@
     assert(Number.isFinite(metadata.delivery.pricePerMileOneWay) && metadata.delivery.pricePerMileOneWay >= 0, "delivery.pricePerMileOneWay must be non-negative");
     assert(Number.isFinite(metadata.delivery.minimumFee) && metadata.delivery.minimumFee >= 0, "delivery.minimumFee must be non-negative");
     assert(Number.isFinite(metadata.pricingRules.weeklyThresholdNights) && metadata.pricingRules.weeklyThresholdNights > 0, "pricingRules.weeklyThresholdNights must be positive");
+    [
+      "depositAmount",
+      "directBookingAverageSavingsPct",
+      "petCleaningFeeMaximum",
+      "smokeCleaningFeeMinimum"
+    ].forEach((key) => {
+      assert(Number.isFinite(metadata.pricingRules[key]) && metadata.pricingRules[key] >= 0, `pricingRules.${key} must be non-negative`);
+    });
+    assert(isObject(metadata.pricingRules.paymentSchedule), "pricingRules.paymentSchedule is required");
+    assert(Number.isFinite(metadata.pricingRules.paymentSchedule.secondPaymentPctOfBalance) && metadata.pricingRules.paymentSchedule.secondPaymentPctOfBalance >= 0 && metadata.pricingRules.paymentSchedule.secondPaymentPctOfBalance <= 100, "pricingRules.paymentSchedule.secondPaymentPctOfBalance must be between 0 and 100");
+    assert(Number.isFinite(metadata.pricingRules.paymentSchedule.secondPaymentDaysBeforeStart) && metadata.pricingRules.paymentSchedule.secondPaymentDaysBeforeStart >= 0, "pricingRules.paymentSchedule.secondPaymentDaysBeforeStart must be non-negative");
+    assert(isObject(metadata.pricingRules.cancellation), "pricingRules.cancellation is required");
+    assert(Array.isArray(metadata.pricingRules.cancellation.refundTiers) && metadata.pricingRules.cancellation.refundTiers.length > 0, "pricingRules.cancellation.refundTiers is required");
+    metadata.pricingRules.cancellation.refundTiers.forEach((tier) => {
+      assert(isObject(tier), "each cancellation refund tier must be an object");
+      assert(Number.isFinite(tier.minimumDaysBeforeStart) && tier.minimumDaysBeforeStart >= 0, "cancellation minimumDaysBeforeStart must be non-negative");
+      assert(tier.maximumDaysBeforeStart === null || (Number.isFinite(tier.maximumDaysBeforeStart) && tier.maximumDaysBeforeStart >= tier.minimumDaysBeforeStart), "cancellation maximumDaysBeforeStart is invalid");
+      assert(Number.isFinite(tier.refundPctExcludingDeposit) && tier.refundPctExcludingDeposit >= 0 && tier.refundPctExcludingDeposit <= 100, "cancellation refundPctExcludingDeposit must be between 0 and 100");
+    });
+    metadata.rateTiers.forEach((tier) => {
+      assert(isObject(tier) && typeof tier.id === "string", "each rate tier must have an id");
+      assert(isObject(tier.discountPct), `rate tier '${tier.id}' discountPct is required`);
+      ["nightly", "weekly"].forEach((key) => {
+        assert(Number.isFinite(tier.discountPct[key]) && tier.discountPct[key] >= 0 && tier.discountPct[key] <= 100, `rate tier '${tier.id}' ${key} discount must be between 0 and 100`);
+      });
+    });
+    metadata.holidays.forEach((holiday) => {
+      assert(isObject(holiday) && typeof holiday.id === "string", "each holiday must have an id");
+      assert(Number.isFinite(holiday.surchargePct) && holiday.surchargePct >= 0 && holiday.surchargePct <= 100, `holiday '${holiday.id}' surcharge must be between 0 and 100`);
+    });
+    metadata.fees.forEach((fee) => {
+      assert(isObject(fee) && typeof fee.id === "string", "each fee must have an id");
+      assert(Number.isFinite(fee.amount) && fee.amount >= 0, `fee '${fee.id}' amount must be non-negative`);
+    });
 
     const websiteKeys = new Set();
     metadata.campers.forEach((camper) => {
@@ -69,7 +106,9 @@
       if (camper.status.forSale && camper.website.saleVisible) {
         assert(isSafeRelativePath(camper.website.salePagePath), "sale camper salePagePath is required");
         assert(isSafeRelativePath(camper.website.salePreviewImage), "sale camper salePreviewImage is required");
-        assert(isObject(camper.saleListing) && Number.isFinite(camper.saleListing.price), "sale camper saleListing.price is required");
+        assert(isObject(camper.saleListing) && Number.isFinite(camper.saleListing.price) && camper.saleListing.price >= 0, "sale camper saleListing.price must be non-negative");
+        assert(typeof camper.saleListing.terms === "string" && camper.saleListing.terms.trim().length > 0, "sale camper saleListing.terms is required");
+        assert(typeof camper.saleListing.location === "string" && camper.saleListing.location.trim().length > 0, "sale camper saleListing.location is required");
       }
     });
 

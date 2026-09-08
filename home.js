@@ -201,17 +201,16 @@
     footerPhone.textContent = phone;
     if (/^\d{10}$/.test(phoneDigits)) footerPhone.href = `sms:+1${phoneDigits}`;
 
-    const promoEmail = document.getElementById("promoContactEmail");
-    promoEmail.textContent = email;
-    promoEmail.href = `mailto:${email}`;
-    const promoPhone = document.getElementById("promoContactPhone");
-    promoPhone.textContent = phone;
-    if (/^\d{10}$/.test(phoneDigits)) promoPhone.href = `tel:+1${phoneDigits}`;
-
     const returnTier = metadata.rateTiers.find((tier) => tier.id === "return-customer");
-    if (returnTier) document.getElementById("returnCustomerDiscount").textContent = returnTier.discountPct.nightly;
-    document.getElementById("deliveryPrice").textContent = HHRMetadata.formatCurrency(metadata.delivery.pricePerMileOneWay);
-    document.getElementById("deliveryMinimum").textContent = HHRMetadata.formatCurrency(metadata.delivery.minimumFee);
+    if (!returnTier) throw new Error("Return-customer rate tier is missing from metadata.");
+    document.getElementById("returnCustomerOffer").textContent =
+      `return customers receive ${returnTier.discountPct.nightly}% off`;
+    document.getElementById("deliverySummary").textContent =
+      `I deliver to your campground and set up the camper so it is walk-in ready. ` +
+      `Dropoff and pickup is scheduled based on campground check-in and check-out times. ` +
+      `Delivery fees vary by distance at ${HHRMetadata.formatCurrency(metadata.delivery.pricePerMileOneWay)}/mile ` +
+      `away from Milford, NH with a ${HHRMetadata.formatCurrency(metadata.delivery.minimumFee)} minimum — ` +
+      `request a quote for exact delivery pricing.`;
   }
 
   document.addEventListener("DOMContentLoaded", async () => {
@@ -244,6 +243,8 @@
       initializeCarousels();
     } catch (error) {
       console.error("Could not render camper metadata:", error);
+      document.getElementById("returnCustomerOffer").textContent = "contact us for current return-customer discounts";
+      document.getElementById("deliverySummary").textContent = "Please contact us for current delivery pricing.";
       listings.replaceChildren();
       const message = document.createElement("div");
       message.className = "card";
