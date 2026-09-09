@@ -593,20 +593,284 @@ function migrateMileageToMetadata_(spreadsheet) {
   });
 }
 
+function getCurrentCalendarYear_() {
+  return Number(Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy"));
+}
+
+function getCanonicalWorkflowYear_(fileName) {
+  const match = String(fileName || "").trim().match(/^HHRentals-(\d{4})IncomeExpenses$/);
+  return match ? Number(match[1]) : null;
+}
+
+function getMetadataSyncTargets_(metadata) {
+  const targets = [];
+  const seenFileIds = new Set();
+  const currentYear = getCurrentCalendarYear_();
+
+  function addTarget_(file, kind, year) {
+    if (!file || seenFileIds.has(file.getId())) return;
+
+    seenFileIds.add(file.getId());
+    targets.push({
+      file: file,
+      spreadsheet: SpreadsheetApp.openById(file.getId()),
+      kind: kind,
+      year: year,
+      label: file.getName()
+    });
+  }
+
+  const templateConfig = metadata.googleAssets.workflowSpreadsheetTemplate;
+  const templateFile = getDriveFileByIdOrName_(templateConfig.id, templateConfig.name);
+  if (!templateFile) {
+    throw new Error(`Workflow spreadsheet template '${templateConfig.name}' was not found.`);
+  }
+  if (templateFile.getMimeType() !== MimeType.GOOGLE_SHEETS) {
+    throw new Error(`Workflow spreadsheet template '${templateConfig.name}' is not a Google Sheet.`);
+  }
+  addTarget_(templateFile, "template", null);
+
+  const workflowFolder = getWorkflowSpreadsheetFolder_(metadata);
+  const files = workflowFolder.getFiles();
+
+  while (files.hasNext()) {
+    const file = files.next();
+    if (file.getMimeType() !== MimeType.GOOGLE_SHEETS) continue;
+
+    const year = getCanonicalWorkflowYear_(file.getName());
+    if (year === null || year < currentYear) continue;
+
+    addTarget_(file, "year", year);
+  }
+
+  targets.sort((first, second) => {
+    if (first.kind !== second.kind) return first.kind === "template" ? -1 : 1;
+    return (first.year || 0) - (second.year || 0) || first.label.localeCompare(second.label);
+  });
+
+  return targets;
+}
+
+function getMetadataSyncWriteRanges_(spreadsheet, metadata, layout) {
+  const ranges = [];
+
+  function addRange_(sheetName, row, column, numRows, numColumns) {
+    const sheet = spreadsheet.getSheetByName(sheetName);
+    if (!sheet) return;
+    ranges.push({
+      range: sheet.getRange(row, column, Math.max(numRows, 1), Math.max(numColumns, 1)),
+      label: `${sheetName}!${sheet.getRange(row, column, Math.max(numRows, 1), Math.max(numColumns, 1)).getA1Notation()}`
+    });
+  }
+
+  const metadataSheet = spreadsheet.getSheetByName(METADATA_SHEET_NAME);
+  if (metadataSheet) {
+    addRange_(
+      METADATA_SHEET_NAME,
+      1,
+      1,
+      Math.max(metadataSheet.getLastRow(), layout.rows.length, 1),
+      Math.max(metadataSheet.getLastColumn(), 10)
+    );
+  }
+
+  [
+    "A2", "C8", "C9", "B11", "D11", "C14", "B17", "E17", "B20", "B22",
+    "B23", "B24", "C24", "E24", "B25", "B26", "C26", "B27", "C27", "B28",
+    "B18", "C18:F18", "B13", "B14", "C11", "C20:F20", "C22:E22"
+  ].forEach(a1 => {
+    const quoteSheet = spreadsheet.getSheetByName(QUOTE_SHEET_NAME);
+    if (quoteSheet) ranges.push({ range: quoteSheet.getRange(a1), label: `${QUOTE_SHEET_NAME}!${a1}` });
+  });
+
+  const summarySheet = spreadsheet.getSheetByName(SUMMARY_SHEET_NAME);
+  if (summarySheet) {
+    addRange_(
+      SUMMARY_SHEET_NAME,
+      21,
+      3,
+      1,
+      Math.max(metadata.campers.length, summarySheet.getLastColumn() - 2, 1)
+    );
+  }
+
+  const bookingsSheet = spreadsheet.getSheetByName(BOOKINGS_SHEET_NAME);
+  if (bookingsSheet) {
+    const bookingsLastRow = Math.max(bookingsSheet.getLastRow(), BOOKINGS_HEADER_ROW + 1);
+    addRange_(BOOKINGS_SHEET_NAME, 1, 11, bookingsLastRow, 1);
+    addRange_(BOOKINGS_SHEET_NAME, BOOKINGS_HEADER_ROW + 1, 8, Math.max(bookingsLastRow - BOOKINGS_HEADER_ROW, 1), 1);
+  }
+
+  [
+    [CONTRACT_DATA_SHEET_NAME, "B6"],
+    [CONTRACT_DATA_SHEET_NAME, "C12"],
+    [CONTRACT_DATA_SHEET_NAME, "A16"],
+    [MILEAGE_SHEET_NAME, "C6"],
+    [MILEAGE_SHEET_NAME, "D4"],
+    [MILEAGE_SHEET_NAME, "H4"],
+    [MILEAGE_SHEET_NAME, "I4"],
+    [MILEAGE_SHEET_NAME, "E35:E37"]
+  ].forEach(item => {
+    const sheet = spreadsheet.getSheetByName(item[0]);
+    if (sheet) ranges.push({ range: sheet.getRange(item[1]), label: `${item[0]}!${item[1]}` });
+  });
+
+  return ranges;
+}
+
+function getBlockingMetadataProtectionIssues_(writeRanges) {
+  const issues = [];
+  const seen = new Set();
+
+  function rangesOverlap_(firstRange, secondRange) {
+    if (firstRange.getSheet().getSheetId() !== secondRange.getSheet().getSheetId()) return false;
+
+    const firstBottom = firstRange.getRow() + firstRange.getNumRows() - 1;
+    const firstRight = firstRange.getColumn() + firstRange.getNumColumns() - 1;
+    const secondBottom = secondRange.getRow() + secondRange.getNumRows() - 1;
+    const secondRight = secondRange.getColumn() + secondRange.getNumColumns() - 1;
+
+    return firstRange.getRow() <= secondBottom && secondRange.getRow() <= firstBottom &&
+      firstRange.getColumn() <= secondRight && secondRange.getColumn() <= firstRight;
+  }
+
+  writeRanges.forEach(target => {
+    const protections = target.range.getSheet()
+      .getProtections(SpreadsheetApp.ProtectionType.SHEET)
+      .concat(target.range.getSheet().getProtections(SpreadsheetApp.ProtectionType.RANGE));
+
+    protections.forEach(protection => {
+      if (protection.isWarningOnly() || protection.canEdit()) return;
+
+      let protectedRange;
+      try {
+        protectedRange = protection.getRange();
+      } catch (e) {
+        const key = `${target.range.getSheet().getSheetId()}:unknown`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          issues.push(`a protection on '${target.range.getSheet().getName()}' could not be inspected`);
+        }
+        return;
+      }
+
+      if (!rangesOverlap_(target.range, protectedRange)) return;
+
+      const key = `${protectedRange.getSheet().getSheetId()}:${protectedRange.getA1Notation()}`;
+      if (seen.has(key)) return;
+
+      seen.add(key);
+      issues.push(
+        `protected range '${protectedRange.getSheet().getName()}!${protectedRange.getA1Notation()}' overlaps ${target.label}`
+      );
+    });
+  });
+
+  return issues;
+}
+
+function getMetadataSyncCompatibilityIssues_(spreadsheet, metadata) {
+  const issues = [];
+  const layout = buildMetadataSheetData_(metadata);
+  const requiredSheets = [
+    QUOTE_SHEET_NAME,
+    SUMMARY_SHEET_NAME,
+    BOOKINGS_SHEET_NAME,
+    CONTRACT_DATA_SHEET_NAME,
+    MILEAGE_SHEET_NAME
+  ];
+
+  requiredSheets.forEach(sheetName => {
+    if (!spreadsheet.getSheetByName(sheetName)) {
+      issues.push(`missing required sheet '${sheetName}'`);
+    }
+  });
+
+  const quoteSheet = spreadsheet.getSheetByName(QUOTE_SHEET_NAME);
+  if (quoteSheet) {
+    [
+      ["A20", "Add-Ons"],
+      ["A22", "Fees"],
+      ["A23", "8.5% NH M&R Tax"],
+      ["A24", "Expected Income"],
+      ["A25", "Deposit req:"],
+      ["A26", "Next Payment"],
+      ["A27", "Final payment:"],
+      ["A28", "Full refund date:"]
+    ].forEach(item => {
+      const actualLabel = String(quoteSheet.getRange(item[0]).getDisplayValue() || "").trim();
+      if (actualLabel !== item[1]) {
+        issues.push(`Quote layout mismatch at ${item[0]}: expected '${item[1]}', found '${actualLabel}'`);
+      }
+    });
+  }
+
+  const summarySheet = spreadsheet.getSheetByName(SUMMARY_SHEET_NAME);
+  if (summarySheet) {
+    if (String(summarySheet.getRange("B21").getDisplayValue() || "").trim() !== "Total") {
+      issues.push("Summary layout mismatch: expected 'Total' in B21");
+    } else {
+      const outputRow = 21;
+      const firstOutputColumn = 3;
+      const camperCount = metadata.campers.length;
+      const columnsToInspect = Math.max(
+        camperCount,
+        summarySheet.getLastColumn() - firstOutputColumn + 1
+      );
+      const existingRange = summarySheet.getRange(outputRow, firstOutputColumn, 1, columnsToInspect);
+      const existingFormulas = existingRange.getFormulas()[0];
+      const existingValues = existingRange.getValues()[0];
+
+      for (let index = 0; index < camperCount; index++) {
+        const hasContent = existingFormulas[index] || existingValues[index] !== "";
+        if (hasContent && !isSummaryCamperFormula_(existingFormulas[index])) {
+          const cell = existingRange.getCell(1, index + 1).getA1Notation();
+          issues.push(`Summary contains unmanaged content in ${cell}`);
+        }
+      }
+    }
+  }
+
+  [
+    "metadataCamperList",
+    "metadataRateTierList",
+    "metadataHolidayList",
+    "metadataAddOnList",
+    "metadataFeeList"
+  ].forEach(name => {
+    if (!layout.namedRanges[name]) issues.push(`metadata layout is missing named range '${name}'`);
+  });
+
+  getBlockingMetadataProtectionIssues_(getMetadataSyncWriteRanges_(spreadsheet, metadata, layout))
+    .forEach(issue => issues.push(issue));
+
+  return issues;
+}
+
+function assertMetadataSyncCompatibility_(spreadsheet, metadata) {
+  const issues = getMetadataSyncCompatibilityIssues_(spreadsheet, metadata);
+  if (issues.length) {
+    throw new Error(`Metadata sync is not safe for '${spreadsheet.getName()}': ${issues.join("; ")}.`);
+  }
+}
+
 function syncMetadataToSheet_(spreadsheet, metadata) {
   const targetSpreadsheet = spreadsheet || SpreadsheetApp.getActiveSpreadsheet();
   const sourceMetadata = metadata || getMetadata_(true);
+  assertMetadataSyncCompatibility_(targetSpreadsheet, sourceMetadata);
   const layout = buildMetadataSheetData_(sourceMetadata);
   let sheet = targetSpreadsheet.getSheetByName(METADATA_SHEET_NAME);
   if (!sheet) sheet = targetSpreadsheet.insertSheet(METADATA_SHEET_NAME);
 
-  sheet.clear();
-  if (sheet.getMaxRows() < layout.rows.length) {
-    sheet.insertRowsAfter(sheet.getMaxRows(), layout.rows.length - sheet.getMaxRows());
+  const clearRows = Math.max(sheet.getLastRow(), layout.rows.length, 1);
+  const clearColumns = Math.max(sheet.getLastColumn(), 10);
+  if (sheet.getMaxRows() < clearRows) {
+    sheet.insertRowsAfter(sheet.getMaxRows(), clearRows - sheet.getMaxRows());
   }
-  if (sheet.getMaxColumns() < 10) {
-    sheet.insertColumnsAfter(sheet.getMaxColumns(), 10 - sheet.getMaxColumns());
+  if (sheet.getMaxColumns() < clearColumns) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), clearColumns - sheet.getMaxColumns());
   }
+  sheet.getRange(1, 1, clearRows, clearColumns).clear();
   sheet.getRange(1, 1, layout.rows.length, 10).setValues(layout.rows);
   sheet.setFrozenRows(1);
   sheet.getRange(1, 1, 1, 10).setFontWeight("bold").setBackground("#eeeeee");
@@ -639,9 +903,39 @@ function syncMetadataToSheet_(spreadsheet, metadata) {
 }
 
 function syncMetadataToSheet() {
-  const sheet = syncMetadataToSheet_(SpreadsheetApp.getActiveSpreadsheet(), getMetadata_(true));
+  const metadata = getMetadata_(true);
+  const targets = getMetadataSyncTargets_(metadata);
+  const status = [];
+  let syncedCount = 0;
+
+  targets.forEach(target => {
+    const issues = getMetadataSyncCompatibilityIssues_(target.spreadsheet, metadata);
+    if (issues.length) {
+      const message = `Skipped '${target.label}': ${issues.join("; ")}.`;
+      status.push(`⚠️ ${message}`);
+      Logger.log(`WARNING - ${message}`);
+      return;
+    }
+
+    try {
+      const sheet = syncMetadataToSheet_(target.spreadsheet, metadata);
+      syncedCount++;
+      const message = `Synced '${target.label}' (${sheet.getLastRow()} metadata rows).`;
+      status.push(`✅ ${message}`);
+      Logger.log(`SUCCESS - ${message}`);
+    } catch (e) {
+      const message = `Failed '${target.label}': ${e}`;
+      status.push(`⚠️ ${message}`);
+      Logger.log(`WARNING - ${message}`);
+    }
+  });
+
+  if (!targets.length) {
+    status.push("⚠️ No template or current/future canonical workflow spreadsheets were found.");
+  }
+
   SpreadsheetApp.getActiveSpreadsheet().toast(
-    `Synced ${sheet.getLastRow()} metadata rows and refreshed metadata-backed workbook formulas/dropdowns.`,
+    `${status.join("\n")}\n\nSynced ${syncedCount} of ${targets.length} target workbook(s).`,
     "Metadata Sync",
     8
   );
@@ -916,8 +1210,9 @@ function getConfiguredQuoteFolder_() {
   return DriveApp.getFolderById(getGoogleAsset_("quoteFolder").id);
 }
 
-function getWorkflowSpreadsheetFolder_() {
-  const folderConfig = getGoogleAsset_("topLevelFolder");
+function getWorkflowSpreadsheetFolder_(metadata) {
+  const sourceMetadata = metadata || getMetadata_();
+  const folderConfig = sourceMetadata.googleAssets.topLevelFolder;
   return DriveApp.getFolderById(String(folderConfig.id).trim());
 }
 
