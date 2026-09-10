@@ -858,6 +858,7 @@ function syncMetadataToSheet_(spreadsheet, metadata) {
   const targetSpreadsheet = spreadsheet || SpreadsheetApp.getActiveSpreadsheet();
   const sourceMetadata = metadata || getMetadata_(true);
   assertMetadataSyncCompatibility_(targetSpreadsheet, sourceMetadata);
+  ensureNHTaxableAmountWorkflow_(targetSpreadsheet);
   const layout = buildMetadataSheetData_(sourceMetadata);
   let sheet = targetSpreadsheet.getSheetByName(METADATA_SHEET_NAME);
   if (!sheet) sheet = targetSpreadsheet.insertSheet(METADATA_SHEET_NAME);
@@ -1130,6 +1131,11 @@ const ENTRY_INSERT_PLACEHOLDER = "{{insertRow}}";
 const ENTRY_INSERT_CHECKBOX_COLUMN = 2;
 const INVOICE_COLUMN_HEADER = "Invoice";
 const CANCEL_COLUMN_HEADER = "Cancel";
+const NH_TAXABLE_AMOUNT_COLUMN_HEADER = "NH taxable amount";
+const NH_MR_TAX_HEADER_ROW = 2;
+const NH_MR_TAX_MONTH_HEADER = "Filing Month";
+const NH_MR_TAX_RECEIPTS_HEADER = "Receipts from Rental";
+const NH_MR_TAX_REPORT_MONTHS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct"];
 const WAITING_HEADER_ROW = 1;
 const BOOKINGS_HEADER_ROW = 3;
 const CONTACTS_CONTROL_ROW = 1;
@@ -1835,6 +1841,7 @@ function addSpreadsheetMenu_() {
       .addItem("Setup Quote Checkbox", "setupQuoteCheckbox")
       .addItem("Setup Entry Row Checkboxes", "setupEntryRowCheckboxes")
       .addItem("Setup Contacts Selection", "setupContactsSelection")
+      .addItem("Setup NH Taxable Amount", "setupNHTaxableAmountWorkflow")
       .addItem("Setup Triggers", "setupOnEditTrigger")
       .addSeparator()
       .addItem("Sync Metadata", "syncMetadataToSheet")
@@ -2457,6 +2464,15 @@ function createQuote(options) {
       }
     }
 
+    const nhTaxableAmount = getQuoteNHTaxableAmount_(quoteSheet);
+    const taxWorkflow = ensureNHTaxableAmountWorkflow_(ss);
+    addStatus_(
+      statusLog,
+      "NH taxable amount",
+      true,
+      `Calculated ${formatMoney_(nhTaxableAmount)} from ${quoteSheet.getRange("B10").getDisplayValue()} night(s) at ${quoteSheet.getRange("C14").getDisplayValue()} per night; refreshed ${taxWorkflow.formulaCount} tax formula row(s).`
+    );
+
     // STEP 2: Copy the rental agreement template into the booking year's folder
     const templateConfig = getGoogleAsset_("templates.quoteAgreement");
     const templateFile = getDriveFileByIdOrName_(templateConfig.id, templateConfig.name);
@@ -2484,6 +2500,17 @@ function createQuote(options) {
     mergeValues.today = today;
     mergeValues.date = today;
     mergeValues.outdoorsyRentalCost = getNamedRangeDisplayValue_(sourceSs, "outdoorsyTotalCost");
+
+    // Owner-delivered rentals still use the template's Towing Info row. Fill
+    // it with an explicit owner value so the generated contract is not blank.
+    const deliveryRequested = String(quoteSheet.getRange("B16").getDisplayValue() || "")
+      .trim()
+      .toUpperCase();
+    if (deliveryRequested === "YES") {
+      const businessName = String(getMetadata_().business.name || "Happy Hooker Rentals").trim();
+      mergeValues.driverInfo = businessName || "Happy Hooker Rentals";
+      mergeValues.towingVehicleInfo = "";
+    }
 
     replaceNamedRangePlaceholders_(doc, mergeValues);
     doc.saveAndClose();
@@ -2568,6 +2595,7 @@ function createQuote(options) {
       if (header === "Quote Date" || header === "Booking Date") value = today;
       if (header === "Booking ID") value = bookingId;
       if (header === "Next Payment") value = nextPaymentValue;
+      if (header === NH_TAXABLE_AMOUNT_COLUMN_HEADER) value = nhTaxableAmount;
       return value;
     });
     waitingSheet.getRange(newRow, 1, 1, rowValues.length).setValues([rowValues]);
@@ -2673,6 +2701,8 @@ function bookReservation(row, options) {
   if (!row) return;
   if (!waitingSheet) throw new Error("Sheet 'Waiting to Book' not found.");
   if (!bookingsSheet) throw new Error(`Sheet '${BOOKINGS_SHEET_NAME}' not found.`);
+
+  ensureNHTaxableAmountWorkflow_(ss);
 
   // STEP 1: Find the {{nextRenter}} placeholder in Bookings
   const nextFinder = findExactCell_(bookingsSheet, "{{nextRenter}}");
@@ -2976,6 +3006,181 @@ function ensureCheckboxColumn_(sheet, headerRow, headerName) {
   range.setValues(normalizedValues);
 
   return col;
+}
+
+function ensureValueColumnBeforeHeader_(sheet, headerRow, headerName, beforeHeaderName) {
+  let valueCol = getColumnByHeader_(sheet, headerRow, headerName);
+  const beforeCol = getColumnByHeader_(sheet, headerRow, beforeHeaderName);
+
+  if (!valueCol) {
+    valueCol = beforeCol || sheet.getLastColumn() + 1;
+
+    if (valueCol > sheet.getMaxColumns()) {
+      sheet.insertColumnAfter(sheet.getMaxColumns());
+    } else {
+      sheet.insertColumnBefore(valueCol);
+    }
+
+    sheet.getRange(headerRow, valueCol).setValue(headerName);
+  } else if (beforeCol && valueCol !== beforeCol - 1) {
+    // Relocate an existing column so all workflow sheets have the same layout.
+    const originalValueCol = valueCol;
+    sheet.insertColumnBefore(beforeCol);
+    const shiftedValueCol = originalValueCol >= beforeCol ? originalValueCol + 1 : originalValueCol;
+    sheet.getRange(1, shiftedValueCol, sheet.getMaxRows(), 1)
+      .copyTo(sheet.getRange(1, beforeCol, sheet.getMaxRows(), 1), { contentsOnly: false });
+    sheet.deleteColumn(shiftedValueCol);
+    valueCol = originalValueCol < beforeCol ? beforeCol - 1 : beforeCol;
+    Logger.log(
+      `Moved '${headerName}' in '${sheet.getName()}' to column ${valueCol}, immediately left of '${beforeHeaderName}'.`
+    );
+  }
+
+  const valueRange = sheet.getRange(1, valueCol, sheet.getMaxRows(), 1);
+  // Inserting beside Cancel can inherit its checkbox validation. This is a
+  // numeric currency field, so remove any inherited or stale validation.
+  valueRange.clearDataValidations();
+  const normalizedValues = valueRange.getValues().map(row => {
+    const value = row[0];
+    return [value === true || value === false ? "" : value];
+  });
+  valueRange.setValues(normalizedValues);
+  valueRange.setNumberFormat("$#,##0.00");
+  return valueCol;
+}
+
+function getColumnLetter_(columnNumber) {
+  let number = Number(columnNumber);
+  let letters = "";
+
+  while (number > 0) {
+    const remainder = (number - 1) % 26;
+    letters = String.fromCharCode(65 + remainder) + letters;
+    number = Math.floor((number - 1) / 26);
+  }
+
+  return letters;
+}
+
+function getQuoteNHTaxableAmount_(quoteSheet) {
+  SpreadsheetApp.flush();
+
+  const nights = Number(quoteSheet.getRange("B10").getValue());
+  const nightlyRate = Number(quoteSheet.getRange("C14").getValue());
+  if (isFinite(nights) && isFinite(nightlyRate) && nights >= 0 && nightlyRate >= 0) {
+    return Math.round(nights * nightlyRate * 100) / 100;
+  }
+
+  const rentalCost = Number(quoteSheet.getRange("B15").getValue());
+  if (isFinite(rentalCost) && rentalCost >= 0) {
+    return Math.round(rentalCost * 100) / 100;
+  }
+
+  throw new Error("Could not calculate NH taxable amount from Quote!B10, Quote!C14, or Quote!B15.");
+}
+
+function updateNHTaxReportFormulas_(spreadsheet) {
+  const bookingsSheet = spreadsheet.getSheetByName(BOOKINGS_SHEET_NAME);
+  const taxSheet = spreadsheet.getSheetByName(NH_MR_TAX_SHEET_NAME);
+
+  if (!bookingsSheet) throw new Error(`Sheet '${BOOKINGS_SHEET_NAME}' not found.`);
+  if (!taxSheet) throw new Error(`Sheet '${NH_MR_TAX_SHEET_NAME}' not found.`);
+
+  const startDateCol = getColumnByHeader_(bookingsSheet, BOOKINGS_HEADER_ROW, "Start Date");
+  const taxableAmountCol = getColumnByHeader_(bookingsSheet, BOOKINGS_HEADER_ROW, NH_TAXABLE_AMOUNT_COLUMN_HEADER);
+  const monthCol = getColumnByHeader_(taxSheet, NH_MR_TAX_HEADER_ROW, NH_MR_TAX_MONTH_HEADER);
+  const receiptsCol = getColumnByHeader_(taxSheet, NH_MR_TAX_HEADER_ROW, NH_MR_TAX_RECEIPTS_HEADER);
+
+  if (!startDateCol || !taxableAmountCol) {
+    throw new Error(
+      `Sheet '${BOOKINGS_SHEET_NAME}' must contain 'Start Date' and '${NH_TAXABLE_AMOUNT_COLUMN_HEADER}' headers.`
+    );
+  }
+  if (!monthCol || !receiptsCol) {
+    throw new Error(
+      `Sheet '${NH_MR_TAX_SHEET_NAME}' must contain '${NH_MR_TAX_MONTH_HEADER}' and '${NH_MR_TAX_RECEIPTS_HEADER}' headers.`
+    );
+  }
+
+  const lastRow = taxSheet.getLastRow();
+  if (lastRow <= NH_MR_TAX_HEADER_ROW) return 0;
+
+  const startDateLetter = getColumnLetter_(startDateCol);
+  const taxableAmountLetter = getColumnLetter_(taxableAmountCol);
+  const monthLetter = getColumnLetter_(monthCol);
+  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const monthArray = `{${monthNames.map(month => `"${month}"`).join(",")}}`;
+  const monthValues = taxSheet
+    .getRange(NH_MR_TAX_HEADER_ROW + 1, monthCol, lastRow - NH_MR_TAX_HEADER_ROW, 1)
+    .getDisplayValues();
+  let formulaCount = 0;
+
+  monthValues.forEach((row, index) => {
+    const reportMonth = String(row[0] || "").trim();
+    if (NH_MR_TAX_REPORT_MONTHS.indexOf(reportMonth) === -1) return;
+
+    const taxRow = NH_MR_TAX_HEADER_ROW + 1 + index;
+    const formula =
+      `=SUMPRODUCT(--IFERROR(MONTH(Bookings!$${startDateLetter}$${BOOKINGS_HEADER_ROW + 1}:$${startDateLetter})=MATCH($${monthLetter}${taxRow},${monthArray},0),FALSE),` +
+      `IFERROR(Bookings!$${taxableAmountLetter}$${BOOKINGS_HEADER_ROW + 1}:$${taxableAmountLetter}*1,0))`;
+
+    taxSheet.getRange(taxRow, receiptsCol).setFormula(formula);
+    formulaCount++;
+  });
+
+  taxSheet.getRange(NH_MR_TAX_HEADER_ROW + 1, receiptsCol, Math.max(lastRow - NH_MR_TAX_HEADER_ROW, 1), 1)
+    .setNumberFormat("$#,##0.00");
+  return formulaCount;
+}
+
+function ensureNHTaxableAmountWorkflow_(spreadsheet) {
+  const waitingSheet = spreadsheet.getSheetByName(WAITING_SHEET_NAME);
+  const bookingsSheet = spreadsheet.getSheetByName(BOOKINGS_SHEET_NAME);
+
+  if (!waitingSheet) throw new Error(`Sheet '${WAITING_SHEET_NAME}' not found.`);
+  if (!bookingsSheet) throw new Error(`Sheet '${BOOKINGS_SHEET_NAME}' not found.`);
+
+  const waitingCol = ensureValueColumnBeforeHeader_(
+    waitingSheet,
+    WAITING_HEADER_ROW,
+    NH_TAXABLE_AMOUNT_COLUMN_HEADER,
+    CANCEL_COLUMN_HEADER
+  );
+  const bookingsCol = ensureValueColumnBeforeHeader_(
+    bookingsSheet,
+    BOOKINGS_HEADER_ROW,
+    NH_TAXABLE_AMOUNT_COLUMN_HEADER,
+    CANCEL_COLUMN_HEADER
+  );
+  const formulaCount = updateNHTaxReportFormulas_(spreadsheet);
+
+  return {
+    waitingCol,
+    bookingsCol,
+    formulaCount
+  };
+}
+
+function setupNHTaxableAmountWorkflow() {
+  const statusLog = [];
+  const metadata = getMetadata_(true);
+  const targets = getMetadataSyncTargets_(metadata);
+
+  targets.forEach(target => {
+    try {
+      const result = ensureNHTaxableAmountWorkflow_(target.spreadsheet);
+      addStatus_(
+        statusLog,
+        target.label,
+        true,
+        `NH taxable amount columns are ready in Waiting to Book column ${result.waitingCol} and Bookings column ${result.bookingsCol}; refreshed ${result.formulaCount} tax formula row(s).`
+      );
+    } catch (e) {
+      addStatus_(statusLog, target.label, false, e.toString());
+    }
+  });
+
+  showStatusLog_("NH Taxable Amount Setup", statusLog);
 }
 
 function setupCancelColumns() {
