@@ -4222,3 +4222,410 @@ function setupOnEditTrigger() {
     }
   }
 }
+
+/**
+ * Mobile income/expense web app.
+ *
+ * Deploy this Apps Script project as a web app for the signed-in Google user.
+ * The server uses the caller's existing Apps Script authorization and never
+ * accepts spreadsheet IDs, Drive IDs, or arbitrary sheet names from the UI.
+ */
+function doGet() {
+  return HtmlService.createHtmlOutputFromFile("IncomeExpenseApp")
+    .setTitle("HHR Income & Expenses")
+    .addMetaTag("viewport", "width=device-width, initial-scale=1");
+}
+
+function getIncomeExpenseAppBootstrap() {
+  const now = new Date();
+  return {
+    currentYear: now.getFullYear(),
+    maxReceiptBytes: 5 * 1024 * 1024,
+    supportedReceiptTypes: ["image/jpeg", "image/png", "image/webp", "application/pdf"]
+  };
+}
+
+function searchIncomeExpenseBookings(query) {
+  const normalizedQuery = String(query || "").trim().toLowerCase();
+  if (normalizedQuery.length < 2) return [];
+  if (normalizedQuery.length > 80) throw new Error("Booking search is too long.");
+
+  const matches = [];
+  const seen = {};
+  getAllWorkflowSpreadsheets_().forEach(spreadsheet => {
+    const bookingsSheet = spreadsheet.getSheetByName(BOOKINGS_SHEET_NAME);
+    if (!bookingsSheet || bookingsSheet.getLastRow() <= BOOKINGS_HEADER_ROW) return;
+
+    const headers = bookingsSheet
+      .getRange(BOOKINGS_HEADER_ROW, 1, 1, bookingsSheet.getLastColumn())
+      .getDisplayValues()[0];
+    const bookingIdCol = findIncomeExpenseHeaderColumn_(headers, ["Booking ID", "Booking Id", "BookingId"]);
+    const renterNameCol = findIncomeExpenseHeaderColumn_(headers, ["Renter Name", "Renter"]);
+    const startDateCol = findIncomeExpenseHeaderColumn_(headers, ["Start Date", "Start"]);
+    if (!bookingIdCol || !renterNameCol) return;
+
+    const rows = bookingsSheet
+      .getRange(BOOKINGS_HEADER_ROW + 1, 1, bookingsSheet.getLastRow() - BOOKINGS_HEADER_ROW, bookingsSheet.getLastColumn())
+      .getDisplayValues();
+
+    rows.forEach(row => {
+      const bookingId = String(row[bookingIdCol - 1] || "").trim();
+      const renterName = String(row[renterNameCol - 1] || "").trim();
+      const startDate = startDateCol ? String(row[startDateCol - 1] || "").trim() : "";
+      const haystack = `${bookingId} ${renterName}`.toLowerCase();
+      const key = `${spreadsheet.getId()}:${bookingId}`;
+      if (!bookingId || seen[key] || haystack.indexOf(normalizedQuery) === -1) return;
+
+      seen[key] = true;
+      matches.push({ bookingId, renterName, startDate, year: spreadsheet.getName().match(/(\d{4})/)?.[1] || "" });
+    });
+  });
+
+  return matches
+    .sort((left, right) => `${right.year}${right.bookingId}`.localeCompare(`${left.year}${left.bookingId}`))
+    .slice(0, 25);
+}
+
+function submitIncomeExpenseEntry(payload) {
+  const entry = validateIncomeExpenseEntry_(payload);
+  const targetSpreadsheet = getWorkflowSpreadsheetForYear_(entry.year);
+  const targetSheetName = entry.type === "income"
+    ? INCOME_SHEET_NAME
+    : entry.type === "mileage" ? MILEAGE_SHEET_NAME : EXPENSES_SHEET_NAME;
+  const targetSheet = targetSpreadsheet.getSheetByName(targetSheetName);
+
+  if (!targetSheet) throw new Error(`The '${targetSheetName}' sheet is not available for ${entry.year}.`);
+  validateIncomeExpenseSheetSchema_(targetSheet, entry);
+
+  const receiptUrl = entry.receipt ? saveIncomeExpenseReceipt_(entry.receipt, entry.date, entry.year) : "";
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  try {
+    const placeholder = findExactCell_(targetSheet, ENTRY_INSERT_PLACEHOLDER);
+    if (!placeholder) throw new Error(`The '${targetSheetName}' sheet is missing the ${ENTRY_INSERT_PLACEHOLDER} row.`);
+    const insertRow = placeholder.getRow();
+    insertEntryRowAtPlaceholder_(targetSheet);
+    writeIncomeExpenseEntryRow_(targetSheet, insertRow, entry, receiptUrl);
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
+  }
+
+  return {
+    year: entry.year,
+    sheet: targetSheetName,
+    bookingId: entry.bookingId,
+    receiptSaved: Boolean(receiptUrl),
+    message: `${entry.type === "income" ? "Income" : entry.type === "mileage" ? "Mileage" : "General expense"} saved to ${targetSheetName} for ${entry.year}.`
+  };
+}
+
+function validateIncomeExpenseEntry_(payload) {
+  if (!payload || Object.prototype.toString.call(payload) !== "[object Object]") {
+    throw new Error("Entry data is required.");
+  }
+
+  let type = String(payload.type || "").trim().toLowerCase();
+  const legacyExpenseKind = String(payload.expenseKind || "").trim().toLowerCase();
+  if (type === "expense" && legacyExpenseKind === "mileage") type = "mileage";
+  if (["income", "expense", "mileage"].indexOf(type) === -1) throw new Error("Choose income, general expense, or mileage.");
+
+  const dateText = String(payload.date || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) throw new Error("Enter a valid date.");
+  const dateParts = dateText.split("-").map(Number);
+  const date = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
+  if (date.getFullYear() !== dateParts[0] || date.getMonth() !== dateParts[1] - 1 || date.getDate() !== dateParts[2]) {
+    throw new Error("Enter a valid calendar date.");
+  }
+
+  const amount = Number(payload.amount);
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 1000000) {
+    throw new Error("Amount must be greater than zero and no more than $1,000,000.");
+  }
+
+  const bookingId = cleanIncomeExpenseText_(payload.bookingId, 80);
+  const description = cleanIncomeExpenseText_(payload.description, 500);
+  const account = cleanIncomeExpenseText_(payload.account, 200);
+  if (!description) throw new Error("Description is required.");
+
+  if (type === "mileage" && ["dropoff", "pickup"].indexOf(description.toLowerCase()) === -1) {
+    throw new Error("Mileage description must be Dropoff or Pickup.");
+  }
+  const normalizedDescription = type === "mileage" ? description.toLowerCase() : description;
+  if (type !== "mileage" && !account) throw new Error("Account is required.");
+
+  const entry = {
+    type,
+    date,
+    dateText,
+    year: dateParts[0],
+    amount,
+    bookingId,
+    description: normalizedDescription,
+    account,
+    outdoorsy: payload.outdoorsy === true || String(payload.outdoorsy || "").toLowerCase() === "y" ? "Y" : "N",
+    paidTo: cleanIncomeExpenseText_(payload.paidTo, 200),
+    taxCategory: cleanIncomeExpenseText_(payload.taxCategory, 120),
+    expenseKind: type === "expense" ? "general" : "",
+    rtMileage: null,
+    receipt: validateIncomeExpenseReceipt_(payload.receipt)
+  };
+
+  if (type === "income") {
+    if (!bookingId) throw new Error("Income requires a booking ID.");
+    if (!findIncomeExpenseBooking_(bookingId)) throw new Error("The selected booking could not be found.");
+  } else if (type === "mileage") {
+    if (!bookingId) throw new Error("Mileage requires a booking ID.");
+    const booking = findIncomeExpenseBooking_(bookingId);
+    if (!booking) throw new Error("The selected booking could not be found.");
+    entry.rtMileage = getBookingRoundTripMileage_(booking);
+    if (!Number.isFinite(entry.rtMileage) || entry.rtMileage <= 0) {
+      throw new Error("The selected booking does not have a valid RT mileage value.");
+    }
+  } else {
+    if (!entry.paidTo || !entry.taxCategory) throw new Error("Expense requires Paid to and Tax category.");
+    if (bookingId && !findIncomeExpenseBooking_(bookingId)) throw new Error("The selected booking could not be found.");
+  }
+
+  return entry;
+}
+
+function cleanIncomeExpenseText_(value, maxLength) {
+  const text = String(value || "").trim();
+  if (text.length > maxLength) throw new Error(`Text fields cannot exceed ${maxLength} characters.`);
+  return text;
+}
+
+function validateIncomeExpenseReceipt_(receipt) {
+  if (!receipt) return null;
+  if (Object.prototype.toString.call(receipt) !== "[object Object]") throw new Error("Receipt data is invalid.");
+
+  const mimeType = String(receipt.mimeType || "").trim().toLowerCase();
+  const allowedTypes = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+  if (allowedTypes.indexOf(mimeType) === -1) throw new Error("Receipt must be a JPG, PNG, WEBP, or PDF.");
+
+  const base64 = String(receipt.base64 || "").trim();
+  if (!base64 || base64.length > 7 * 1024 * 1024) throw new Error("Receipt is missing or exceeds the 5 MB limit.");
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) throw new Error("Receipt encoding is invalid.");
+
+  return {
+    mimeType,
+    base64,
+    name: cleanIncomeExpenseText_(receipt.name || "receipt", 120)
+  };
+}
+
+function findIncomeExpenseBooking_(bookingId) {
+  const normalized = String(bookingId || "").trim();
+  if (!normalized) return null;
+
+  for (const spreadsheet of getAllWorkflowSpreadsheets_()) {
+    const sheet = spreadsheet.getSheetByName(BOOKINGS_SHEET_NAME);
+    if (!sheet || sheet.getLastRow() <= BOOKINGS_HEADER_ROW) continue;
+    const headers = sheet.getRange(BOOKINGS_HEADER_ROW, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+    const bookingIdCol = findIncomeExpenseHeaderColumn_(headers, ["Booking ID", "Booking Id", "BookingId"]);
+    if (!bookingIdCol) continue;
+    const values = sheet.getRange(BOOKINGS_HEADER_ROW + 1, 1, sheet.getLastRow() - BOOKINGS_HEADER_ROW, sheet.getLastColumn()).getDisplayValues();
+    const rowIndex = values.findIndex(row => String(row[bookingIdCol - 1] || "").trim() === normalized);
+    if (rowIndex !== -1) return { spreadsheet, sheet, headers, row: values[rowIndex], rowNumber: BOOKINGS_HEADER_ROW + 1 + rowIndex };
+  }
+  return null;
+}
+
+function getBookingRoundTripMileage_(booking) {
+  const mileageCol = findIncomeExpenseHeaderColumn_(booking.headers, [
+    "RT Mileage",
+    "RT Miles",
+    "Round Trip Mileage",
+    "Round Trip Miles",
+    "Mileage",
+    "Miles"
+  ]);
+  if (!mileageCol) throw new Error("The Bookings tab is missing an RT mileage column.");
+  return parseMoney_(booking.row[mileageCol - 1]);
+}
+
+function findIncomeExpenseHeaderRow_(sheet, requiredHeaders) {
+  // Mileage keeps its transaction table below a small calculator section,
+  // so its headers can be below row 30. Scan the complete working area while
+  // keeping a defensive upper bound against unexpectedly large sheets.
+  const scanRows = Math.min(Math.max(sheet.getLastRow(), 1), 100);
+  const lastColumn = sheet.getLastColumn();
+  const observedHeaders = [];
+  for (let row = 1; row <= scanRows; row++) {
+    const headers = sheet.getRange(row, 1, 1, lastColumn).getDisplayValues()[0];
+    headers.forEach(header => {
+      const text = String(header || "").trim();
+      if (text && observedHeaders.indexOf(text) === -1) observedHeaders.push(text);
+    });
+    if (requiredHeaders.every(aliases => findIncomeExpenseHeaderColumn_(headers, aliases))) return row;
+  }
+
+  const expectedFields = requiredHeaders
+    .map((aliases, index) => `Field ${index + 1} (${aliases[0]}): ${aliases.join(" / ")}`)
+    .join("; ");
+  const missingFields = requiredHeaders
+    .filter(aliases => !findIncomeExpenseHeaderColumn_(observedHeaders, aliases))
+    .map(aliases => aliases[0]);
+  const diagnosis = missingFields.length
+    ? `These expected fields were not found anywhere in the scanned rows: ${missingFields.join(", ")}.`
+    : "The expected fields exist somewhere in the scanned rows, but not together on one header row.";
+
+  throw new Error(
+    `Could not find the required headers on '${sheet.getName()}'. ` +
+    `The app expected all of these fields on the same header row within rows 1-${scanRows}: ${expectedFields}. ` +
+    `${diagnosis} Check the spelling of the Mileage tab headers or update the accepted aliases in findIncomeExpenseHeaderRow_.`
+  );
+}
+
+function findIncomeExpenseHeaderColumn_(headers, aliases) {
+  const normalizedAliases = aliases.map(alias => String(alias).toLowerCase().replace(/[^a-z0-9]/g, ""));
+  for (let i = 0; i < headers.length; i++) {
+    const normalizedHeader = String(headers[i] || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (normalizedAliases.indexOf(normalizedHeader) !== -1) return i + 1;
+  }
+  return null;
+}
+
+function validateIncomeExpenseSheetSchema_(sheet, entry) {
+  const dateHeaders = entry.type === "mileage" ? ["Date", "Mileage Date"] : ["Date"];
+  const amountHeaders = entry.type === "mileage"
+    ? ["Cost", "Mileage Cost", "Amount", "Mileage Expense", "Expense", "Fuel Cost", "Gas Cost", "Diesel Cost", "Total Cost"]
+    : ["Amount", "Payment Amount", "Cost", "Mileage Cost"];
+  const descriptionHeaders = entry.type === "mileage"
+    ? ["Description", "Type", "Trip Type", "Mileage Type", "Delivery Type", "Action"]
+    : ["Description", "Payment Description"];
+  const headerRow = entry.type === "mileage"
+    ? findIncomeExpenseHeaderRow_(sheet, [dateHeaders, descriptionHeaders])
+    : findIncomeExpenseHeaderRow_(sheet, [dateHeaders, amountHeaders, descriptionHeaders]);
+  const headers = sheet.getRange(headerRow, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+
+  if (entry.type === "mileage" && !findMileageCostColumn_(sheet, headers)) {
+    throw new Error(
+      `The '${sheet.getName()}' sheet has Date and Description fields, but no recognized mileage cost field. ` +
+      `Expected one of: ${amountHeaders.join(" / ")}. The legacy fallback column E was not available.`
+    );
+  }
+  const required = entry.type === "income"
+    ? [
+      { aliases: ["Booking ID", "Booking Id", "BookingId"], label: "Booking ID" },
+      { aliases: ["Account Paid", "Account", "Paid From"], label: "Account" },
+      { aliases: ["Outdoorsy"], label: "Outdoorsy" }
+    ]
+    : entry.type === "mileage"
+      ? [
+        { aliases: ["Booking ID", "Booking Id", "BookingId"], label: "Booking ID" },
+        { aliases: ["RT Mileage", "RT Miles", "Round Trip Mileage", "Round Trip Miles", "Mileage", "Miles"], label: "RT mileage" }
+      ]
+    : [
+      { aliases: ["Paid To", "PaidTo", "Payee"], label: "Paid to" },
+      { aliases: ["Account Paid", "Account", "Paid From"], label: "Account" },
+      { aliases: ["Tax Category", "TaxCategory"], label: "Tax category" }
+    ];
+
+  required.forEach(field => {
+    if (!findIncomeExpenseHeaderColumn_(headers, field.aliases)) {
+      throw new Error(`The '${sheet.getName()}' sheet is missing the '${field.label}' column.`);
+    }
+  });
+
+  if (entry.type !== "mileage" && entry.bookingId) {
+    const bookingAliases = ["Booking ID", "Booking Id", "BookingId", "Assoc w/Booking ID", "Associated Booking ID"];
+    if (!findIncomeExpenseHeaderColumn_(headers, bookingAliases)) {
+      throw new Error(`The '${sheet.getName()}' sheet is missing a Booking ID or Assoc w/Booking ID column.`);
+    }
+  }
+
+  if (entry.receipt && !findIncomeExpenseHeaderColumn_(headers, ["Receipt", "Receipt URL", "Receipt Link"])) {
+    throw new Error(`The '${sheet.getName()}' sheet is missing a Receipt column.`);
+  }
+}
+
+function writeIncomeExpenseEntryRow_(sheet, rowNumber, entry, receiptUrl) {
+  const dateHeaders = entry.type === "mileage" ? ["Date", "Mileage Date"] : ["Date"];
+  const amountHeaders = entry.type === "mileage"
+    ? ["Cost", "Mileage Cost", "Amount", "Mileage Expense", "Expense", "Fuel Cost", "Gas Cost", "Diesel Cost", "Total Cost"]
+    : ["Amount", "Payment Amount", "Cost", "Mileage Cost"];
+  const descriptionHeaders = entry.type === "mileage"
+    ? ["Description", "Type", "Trip Type", "Mileage Type", "Delivery Type", "Action"]
+    : ["Description", "Payment Description"];
+  const headerRow = entry.type === "mileage"
+    ? findIncomeExpenseHeaderRow_(sheet, [dateHeaders, descriptionHeaders])
+    : findIncomeExpenseHeaderRow_(sheet, [dateHeaders, amountHeaders, descriptionHeaders]);
+  const headers = sheet.getRange(headerRow, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  const setField = (aliases, value) => {
+    const column = findIncomeExpenseHeaderColumn_(headers, aliases);
+    if (column && value !== "" && value !== null && value !== undefined) {
+      sheet.getRange(rowNumber, column).setValue(safeIncomeExpenseSheetValue_(value));
+    }
+  };
+
+  setField(dateHeaders, entry.date);
+  const mileageCostColumn = entry.type === "mileage" ? findMileageCostColumn_(sheet, headers) : null;
+  if (mileageCostColumn) {
+    sheet.getRange(rowNumber, mileageCostColumn).setValue(entry.amount);
+  } else {
+    setField(amountHeaders, entry.amount);
+  }
+  setField(descriptionHeaders, entry.description);
+  const bookingIdAliases = entry.type === "expense"
+    ? ["Booking ID", "Booking Id", "BookingId", "Assoc w/Booking ID", "Associated Booking ID"]
+    : ["Booking ID", "Booking Id", "BookingId"];
+  const bookingIdColumn = findIncomeExpenseHeaderColumn_(headers, bookingIdAliases);
+  if (entry.bookingId && !bookingIdColumn) {
+    throw new Error(`The '${sheet.getName()}' sheet is missing a Booking ID or Assoc w/Booking ID column.`);
+  }
+  if (bookingIdColumn) {
+    sheet.getRange(rowNumber, bookingIdColumn).setValue(safeIncomeExpenseSheetValue_(entry.bookingId));
+    const writtenBookingId = String(sheet.getRange(rowNumber, bookingIdColumn).getDisplayValue() || "").trim();
+    if (entry.bookingId && writtenBookingId !== entry.bookingId) {
+      throw new Error(`The Booking ID could not be written to '${sheet.getName()}' row ${rowNumber}.`);
+    }
+  }
+  setField(["RT Mileage", "RT Miles", "Round Trip Mileage", "Round Trip Miles", "Mileage", "Miles"], entry.rtMileage);
+  setField(["Paid To", "PaidTo", "Payee"], entry.paidTo);
+  setField(["Account Paid", "Account", "Paid From"], entry.account);
+  setField(["Tax Category", "TaxCategory"], entry.taxCategory);
+  if (entry.type === "income") setField(["Outdoorsy"], entry.outdoorsy);
+  setField(["Receipt", "Receipt URL", "Receipt Link"], receiptUrl);
+}
+
+function findMileageCostColumn_(sheet, headers) {
+  const aliases = [
+    "Cost",
+    "Mileage Cost",
+    "Amount",
+    "Mileage Expense",
+    "Expense",
+    "Fuel Cost",
+    "Gas Cost",
+    "Diesel Cost",
+    "Total Cost"
+  ];
+  const namedColumn = findIncomeExpenseHeaderColumn_(headers, aliases);
+  if (namedColumn) return namedColumn;
+
+  // Existing Mileage logic uses E35:E37 as the historical mileage-cost range.
+  // Preserve that established layout when the cost header is blank or uses an
+  // older label that cannot be safely inferred.
+  if (sheet.getMaxColumns() >= 5) return 5;
+  return null;
+}
+
+function safeIncomeExpenseSheetValue_(value) {
+  if (typeof value !== "string") return value;
+  return /^[-=+@]/.test(value) ? `'${value}` : value;
+}
+
+function saveIncomeExpenseReceipt_(receipt, date, year) {
+  const folderRoot = getWorkflowSpreadsheetFolder_();
+  const folderName = `Income Expense Receipts ${year}`;
+  let folders = folderRoot.getFoldersByName(folderName);
+  const folder = folders.hasNext() ? folders.next() : folderRoot.createFolder(folderName);
+  const extension = receipt.mimeType === "application/pdf" ? "pdf" : receipt.mimeType.split("/")[1];
+  const safeName = receipt.name.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/^\.+/, "").slice(0, 80) || "receipt";
+  const fileName = `${Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyyMMdd")}-${Utilities.getUuid()}-${safeName}.${extension}`;
+  const blob = Utilities.newBlob(Utilities.base64Decode(receipt.base64), receipt.mimeType, fileName);
+  return folder.createFile(blob).getUrl();
+}

@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#1f4d3a">
+    <title>HHR Income &amp; Expenses</title>
+    <style>
+      :root { color-scheme: light; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      body { margin: 0; background: #f2f5f3; color: #17201b; }
+      main { max-width: 680px; margin: 0 auto; padding: 20px 16px 40px; }
+      h1 { margin: 0 0 6px; color: #1f4d3a; font-size: 1.55rem; }
+      .intro { margin: 0 0 18px; color: #53615a; }
+      form, .panel { background: #fff; border-radius: 16px; padding: 16px; box-shadow: 0 2px 12px #19382718; }
+      .row { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+      .search-row { display: flex; gap: 8px; align-items: stretch; }
+      .search-row input { flex: 1; min-width: 0; }
+      .icon-button { width: 48px; flex: 0 0 48px; margin-top: 6px; padding: 8px; font-size: 1.25rem; line-height: 1; }
+      label { display: block; font-weight: 650; font-size: .92rem; }
+      input, select, textarea, button { box-sizing: border-box; width: 100%; min-height: 46px; margin-top: 6px; border: 1px solid #b8c6bd; border-radius: 10px; padding: 10px 12px; font: inherit; background: #fff; }
+      textarea { min-height: 84px; resize: vertical; }
+      input:focus, select:focus, textarea:focus { outline: 3px solid #b8e0c9; border-color: #1f4d3a; }
+      fieldset { border: 0; padding: 0; margin: 0 0 14px; }
+      legend { font-weight: 750; margin-bottom: 8px; }
+      .choice { display: flex; gap: 8px; align-items: center; }
+      .choice input { width: auto; min-height: auto; margin: 0; }
+      .choices { display: flex; gap: 18px; }
+      .hidden { display: none !important; }
+      .hint { color: #63736a; font-size: .82rem; margin-top: 5px; }
+      button { cursor: pointer; border: 0; background: #1f4d3a; color: #fff; font-weight: 750; }
+      button:disabled { opacity: .6; cursor: wait; }
+      .status { margin-top: 14px; padding: 11px 12px; border-radius: 10px; background: #e7f3eb; color: #1f4d3a; }
+      .error { background: #fbe9e7; color: #8a261d; }
+      #bookingResults { margin-top: 6px; display: grid; gap: 6px; }
+      .booking { text-align: left; background: #f6faf7; color: #17201b; border: 1px solid #c7d9cc; min-height: 42px; }
+      .booking small { display: block; color: #63736a; }
+      @media (max-width: 520px) { .row { grid-template-columns: 1fr; } .choices { gap: 14px; } main { padding-top: 14px; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>HHR Income &amp; Expenses</h1>
+      <p class="intro">Add a record to the year-specific HHRentals income and expense workbook.</p>
+      <form id="entryForm" novalidate>
+        <fieldset>
+          <legend>Record type</legend>
+          <div class="choices">
+            <label class="choice"><input type="radio" name="type" value="income" checked> Income</label>
+            <label class="choice"><input type="radio" name="type" value="expense"> General Expense</label>
+            <label class="choice"><input type="radio" name="type" value="mileage"> Mileage</label>
+          </div>
+        </fieldset>
+
+        <div class="row">
+          <label>Date<input id="date" name="date" type="date" required></label>
+          <label><span id="amountLabel">Amount</span><input id="amount" name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" required></label>
+        </div>
+
+        <label id="bookingLabel">Booking ID
+          <span class="search-row">
+            <input id="bookingId" name="bookingId" type="search" autocomplete="off" placeholder="Enter booking ID or renter name">
+            <button id="bookingSearchButton" class="icon-button" type="button" aria-label="Search booking IDs" title="Search booking IDs">&#128269;</button>
+          </span>
+        </label>
+        <div id="bookingResults" aria-live="polite"></div>
+        <p class="hint" id="bookingHint">Income requires a booking. Expense booking association is optional except for mileage.</p>
+
+        <div id="standardFields">
+        <div class="row">
+          <label>Description<textarea id="description" name="description" required></textarea></label>
+          <label>Account<select id="account" name="account" required>
+            <option value="">Choose an account</option>
+            <option data-record-types="income">Venmo</option>
+            <option data-record-types="income">PayPal</option>
+            <option data-record-types="income">cash</option>
+            <option data-record-types="income">S1</option>
+            <option data-record-types="expense">S1</option>
+            <option data-record-types="expense">S2</option>
+            <option data-record-types="expense">DCU VISA</option>
+            <option data-record-types="expense">other</option>
+          </select></label>
+        </div>
+        </div>
+
+        <section id="mileageFields" class="hidden">
+          <label>Description<select id="mileageDescription" name="mileageDescription">
+            <option value="">Choose dropoff or pickup</option>
+            <option value="Dropoff">Dropoff</option>
+            <option value="Pickup">Pickup</option>
+          </select></label>
+          <p class="hint">RT mileage is read from the selected booking in the Bookings tab.</p>
+        </section>
+
+        <section id="incomeFields">
+          <label class="choice"><input id="outdoorsy" name="outdoorsy" type="checkbox"> Outdoorsy</label>
+        </section>
+
+        <section id="expenseFields" class="hidden">
+          <label>Paid to<input id="paidTo" name="paidTo" type="text" maxlength="200"></label>
+          <label>Tax category<select id="taxCategory" name="taxCategory">
+            <option value="">Choose a tax category</option>
+            <option>VEH</option>
+            <option>OFF</option>
+            <option>COMM</option>
+            <option>ADV</option>
+            <option>INT</option>
+            <option>RENT</option>
+            <option>ASS</option>
+            <option>LAB</option>
+            <option>SUP</option>
+            <option>TAX</option>
+            <option>UTIL</option>
+            <option>FEE</option>
+            <option>OTH</option>
+            <option>LEG</option>
+            <option>MAINT</option>
+            <option>N/A</option>
+          </select></label>
+        </section>
+
+        <label>Receipt (optional)<input id="receipt" name="receipt" type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></label>
+        <p class="hint">Maximum 5 MB. The receipt is stored in the private Google Drive workflow folder.</p>
+        <button id="submitButton" type="submit">Save record</button>
+        <div id="status" class="status hidden" role="status"></div>
+      </form>
+    </main>
+    <script>
+      const state = { selectedBooking: null, maxReceiptBytes: 5 * 1024 * 1024 };
+      const $ = id => document.getElementById(id);
+
+      function showStatus(message, isError) {
+        const status = $("status");
+        status.textContent = message;
+        status.classList.toggle("error", Boolean(isError));
+        status.classList.remove("hidden");
+      }
+
+      function updateTypeFields() {
+        const type = document.querySelector("input[name=type]:checked").value;
+        $("incomeFields").classList.toggle("hidden", type !== "income");
+        $("expenseFields").classList.toggle("hidden", type !== "expense");
+        $("mileageFields").classList.toggle("hidden", type !== "mileage");
+        $("standardFields").classList.toggle("hidden", type === "mileage");
+        $("amountLabel").textContent = type === "mileage" ? "Cost" : "Amount";
+        $("description").required = type !== "mileage";
+        $("paidTo").required = type === "expense";
+        $("taxCategory").required = type === "expense";
+        $("account").required = type !== "mileage";
+        $("mileageDescription").required = type === "mileage";
+        Array.from($("account").options).forEach(option => {
+          if (!option.dataset.recordTypes) return;
+          const allowedTypes = option.dataset.recordTypes.split(" ");
+          option.hidden = allowedTypes.indexOf(type) === -1;
+        });
+        if ($("account").selectedOptions[0] && $("account").selectedOptions[0].hidden) {
+          $("account").value = "";
+        }
+        $("bookingHint").textContent = type === "income"
+          ? "Income requires a booking."
+          : type === "mileage"
+            ? "Mileage requires a booking; search by booking ID or renter name."
+            : "General expense booking association is optional.";
+      }
+
+      function renderBookingResults(matches) {
+        const results = $("bookingResults");
+        results.textContent = "";
+        matches.forEach(match => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "booking";
+          button.textContent = `${match.bookingId} — ${match.renterName}`;
+          const small = document.createElement("small");
+          small.textContent = match.startDate ? `Start: ${match.startDate}` : "";
+          button.appendChild(small);
+          button.addEventListener("click", () => {
+            state.selectedBooking = match;
+            $("bookingId").value = match.bookingId;
+            results.textContent = "";
+          });
+          results.appendChild(button);
+        });
+      }
+
+      $("bookingId").addEventListener("input", event => {
+        state.selectedBooking = null;
+        $("bookingResults").textContent = "";
+      });
+
+      $("bookingSearchButton").addEventListener("click", () => {
+        const query = $("bookingId").value.trim();
+        if (query.length < 2) {
+          showStatus("Enter at least two characters to search booking IDs.", true);
+          return;
+        }
+
+        const searchButton = $("bookingSearchButton");
+        searchButton.disabled = true;
+        google.script.run
+          .withSuccessHandler(matches => {
+            searchButton.disabled = false;
+            renderBookingResults(matches);
+            if (!matches.length) showStatus("No matching booking IDs were found.", true);
+          })
+          .withFailureHandler(error => {
+            searchButton.disabled = false;
+            showStatus(error.message || "Booking search failed.", true);
+          })
+          .searchIncomeExpenseBookings(query);
+      });
+
+      async function readReceipt() {
+        const file = $("receipt").files[0];
+        if (!file) return null;
+        if (file.size > state.maxReceiptBytes) throw new Error("Receipt exceeds the 5 MB limit.");
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(new Error("Could not read the receipt."));
+          reader.onload = () => resolve({ name: file.name, mimeType: file.type, base64: String(reader.result).split(",")[1] || "" });
+          reader.readAsDataURL(file);
+        });
+      }
+
+      $("entryForm").addEventListener("submit", async event => {
+        event.preventDefault();
+        const button = $("submitButton");
+        button.disabled = true;
+        try {
+          const type = document.querySelector("input[name=type]:checked").value;
+          const payload = {
+            type,
+            date: $("date").value,
+            amount: $("amount").value,
+            bookingId: $("bookingId").value.trim(),
+            description: type === "mileage" ? $("mileageDescription").value : $("description").value.trim(),
+            account: $("account").value,
+            outdoorsy: $("outdoorsy").checked,
+            paidTo: $("paidTo").value.trim(),
+            taxCategory: $("taxCategory").value.trim(),
+            receipt: await readReceipt()
+          };
+          google.script.run.withSuccessHandler(result => {
+            showStatus(result.message, false);
+            $("entryForm").reset();
+            state.selectedBooking = null;
+            updateTypeFields();
+          }).withFailureHandler(error => showStatus(error.message || "Could not save the record.", true)).submitIncomeExpenseEntry(payload);
+        } catch (error) {
+          showStatus(error.message, true);
+        } finally {
+          button.disabled = false;
+        }
+      });
+
+      document.querySelectorAll("input[name=type]").forEach(input => input.addEventListener("change", updateTypeFields));
+      $("date").value = new Date().toISOString().slice(0, 10);
+      google.script.run.withSuccessHandler(config => { state.maxReceiptBytes = config.maxReceiptBytes; }).getIncomeExpenseAppBootstrap();
+      updateTypeFields();
+    </script>
+  </body>
+</html>
