@@ -315,10 +315,16 @@
       "description": "cost of cleaning and restocking camper with items"
     },
     {
+      "id": "deliver-conflict",
+      "label": "delivery conflict fee",
+      "amount": 100,
+      "description": "additional fee to accomodate delivery schedule"
+    },
+    {
       "id": "other",
       "label": "other",
       "amount": 0,
-      "description": "extra charge for 3rd party delivery"
+      "description": "<<add fee descripiton here>>"
     }
   ],
   "addOns": [
