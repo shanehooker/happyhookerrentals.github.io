@@ -257,12 +257,12 @@
       "dailyBaseRate": 110,
       "status": {
         "rentable": true,
-        "forSale": true,
+        "forSale": false,
         "active": true
       },
       "website": {
         "rentalVisible": true,
-        "saleVisible": true,
+        "saleVisible": false,
         "galleryPath": "./forSale/2015Starcraft/",
         "galleryImages": [
           "ext3.jpg",

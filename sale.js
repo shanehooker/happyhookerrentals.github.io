@@ -25,11 +25,11 @@
       const terms = requireText(camper.saleListing.terms, "Sale terms");
       const location = requireText(camper.saleListing.location, "Sale location");
       priceElement.textContent = `${HHRMetadata.formatCurrency(camper.saleListing.price)} ${terms}`;
-      locationElement.textContent = `\u{1F4CD} Located in ${location}`;
+      if (locationElement) locationElement.textContent = `\u{1F4CD} Located in ${location}`;
     } catch (error) {
       console.error("Could not render sale metadata:", error);
       priceElement.textContent = "Contact us for the current sale price";
-      locationElement.textContent = "Contact us for sale details";
+      if (locationElement) locationElement.textContent = "";
     }
   });
 })();
